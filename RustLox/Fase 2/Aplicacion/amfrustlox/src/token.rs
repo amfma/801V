@@ -52,7 +52,7 @@ pub enum TokenType{
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    token_type : TokenType,
+    pub token_type : TokenType,
     lexeme : String,
     line: usize,
     literal: Literal,

@@ -3,6 +3,7 @@ use std::{env, fmt::format, io::{self, Write, stdin}};
 use crate::token::{Scanner, Token};
 
 mod token;
+mod parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
