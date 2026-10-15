@@ -1,6 +1,8 @@
 use std::{env, fmt::format, io::{self, Write, stdin}};
 
 use crate::token::{Scanner, Token};
+use crate::parser::{Expr, Parser};
+use crate::interpreter::{Interpreter};
 
 mod token;
 mod parser;
@@ -16,18 +18,23 @@ fn main() {
 }
 
 fn run_rompt() {
-    let mut buffer: String = String::new();
+    let mut interpreter: Interpreter = Interpreter::new();
 
     loop {
+        let mut buffer: String = String::new();
         print!(">>>");
         io::stdout().flush().expect("Console flush error");
         std::io::stdin().read_line(&mut buffer).expect("Expect input to be read");
-        buffer.push(';');
+        //buffer.push();
         let scanner = Scanner::new(&buffer);
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
-
-        for token in tokens {
-            println!("{:?}", token)
+        let mut parser = Parser::new(tokens);
+        let expressions = parser.parse();
+        match expressions {
+            Ok(unw_expr) => {
+                interpreter.interpret(&unw_expr);
+            },
+            Err(_) => println!("Parsing Error"),
         }
     }
 }

@@ -1,5 +1,6 @@
 pub enum Error {
-    ParserError {error_type: ParserError}
+    ParserError {error_type: ParserError},
+    RuntimeError
 }
 
 pub enum ParserError {

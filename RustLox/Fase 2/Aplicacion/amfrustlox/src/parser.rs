@@ -130,7 +130,7 @@ impl From<&Token> for Operator {
 }
 
 #[derive(Debug)]
-struct Parser {
+pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
 }
@@ -148,7 +148,7 @@ impl Parser {
     fn primary(&mut self) -> Result<Expr, Error> {
         if self.match_tokens([TokenType::Nil]) {
             Ok(Expr::nil())
-        } else if self.match_tokens([TokenType::RightParen]) {
+        } else if self.match_tokens([TokenType::LeftParen]) {
             let grouped_expression = self.expression()?;
             self.consume(TokenType::RightParen, String::from("Error"))?;
             Ok(Expr::grouping(grouped_expression))
@@ -177,7 +177,7 @@ impl Parser {
             let right_operand: Expr = self.unary()?;
             Ok(Expr::unary(operator, right_operand))
         } else {
-            Err(Error::syntax_error())
+            self.primary()
         }
     }
 
@@ -198,7 +198,7 @@ impl Parser {
             let right: Expr = self.comparison()?;
             Ok(Expr::binary(left, operator, right))
         } else {
-            Err(Error::syntax_error())
+            Ok(left)
         }
     }
 
@@ -209,7 +209,7 @@ impl Parser {
             let right: Expr = self.term()?;
             Ok(Expr::binary(left, operator, right))
         } else {
-            Err(Error::syntax_error())
+            Ok(left)
         }
     }
 
@@ -220,7 +220,7 @@ impl Parser {
             let right: Expr = self.factor()?;
             Ok(Expr::binary(left, operator, right))
         } else {
-            Err(Error::syntax_error())
+            Ok(left)
         }
     }
 
@@ -231,7 +231,7 @@ impl Parser {
             let right: Expr = self.unary()?;
             Ok (Expr::binary(left, operator, right))
         } else {
-            Err(Error::syntax_error())
+            Ok(left)
         }
     }
 
@@ -273,6 +273,10 @@ impl Parser {
         } else {
             Ok(())
         }
+    }
+
+    pub fn parse(&mut self) -> Result<Expr, Error> {
+        self.expression()
     }
 }
 
