@@ -129,6 +129,17 @@ impl From<&Token> for Operator {
     }
 }
 
+pub enum Stmt {
+    Expression {
+        expr: Expr
+    },
+    Print {
+        expr: Expr
+    }
+}
+
+
+
 #[derive(Debug)]
 pub struct Parser {
     tokens: Vec<Token>,
@@ -235,6 +246,25 @@ impl Parser {
         }
     }
 
+    fn statement(&mut self) -> Result<Stmt, Error> {
+        if self.match_tokens([TokenType::Print]) {
+            self.print_statement()
+        } else {
+            self.expression_statement()
+        }
+    }
+
+    fn print_statement(&mut self) -> Result<Stmt, Error> {
+        let value: Expr = self.expression()?;
+        self.consume(TokenType::Semicolon, "Expect ; after value".to_string())?;
+        Ok(Stmt::Print { expr: value })
+    }
+
+    fn expression_statement(&mut self) -> Result<Stmt, Error> {
+        let expression: Expr = self.expression()?;
+        self.consume(TokenType::Semicolon, "Expect ; after value".to_string())?;
+        Ok(Stmt::Expression { expr: expression })
+    }
 
     //Helper methods
     fn is_at_end(&self) -> bool {
@@ -275,8 +305,20 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Expr, Error> {
+    /* Output methods. This methods generate an output to be used by the interpreter
+        parse_expression is used for the simple evaluator/interpreter,
+        parse is the final method, it returns a collection of statements to be consumed by the interpreter */
+    pub fn parse_expression(&mut self) -> Result<Expr, Error> {
         self.expression()
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, Error> {
+        let mut statements: Vec<Stmt> = vec![];
+        while !self.is_at_end() {
+            statements.push(self.statement()?);
+        }
+
+        Ok(statements)
     }
 }
 

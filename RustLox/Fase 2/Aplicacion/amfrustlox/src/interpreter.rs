@@ -1,6 +1,6 @@
 use std::fmt::{format, write};
 
-use crate::{error::{self, Error}, interpreter::Value::Boolean, parser::{Expr, Operator, ast}};
+use crate::{error::{self, Error}, parser::{self, Expr, Operator, Stmt}};
 
 type Output = Result<Value, error::Error>;
 
@@ -40,6 +40,20 @@ impl std::fmt::Display for Value {
 impl Interpreter {
     pub fn new() -> Self {
         Self {}
+    }
+
+    fn execute_statement(&mut self, statement: &Stmt) -> Result<(), Error> {
+        match statement {
+            Stmt::Expression { expr } => {
+                self.evaluate_expression(expr)?;
+            },
+            Stmt::Print { expr } => {
+                let value = self.evaluate_expression(expr)?;
+                println!("{}", value);
+            },
+        }
+
+        Ok(())
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Output {
@@ -88,11 +102,17 @@ impl Interpreter {
         }
     }
 
-    pub fn interpret(&mut self, expression: &Expr) {
+    pub fn interpret_expression(&mut self, expression: &Expr) {
         let result = self.evaluate_expression(expression);
         match result {
             Ok(value) => println!("{}", value),
             Err(_) => println!("Error"),
+        }
+    }
+
+    pub fn interpret(&mut self, statements: &Vec<Stmt>) {
+        for statement in statements {
+            self.execute_statement(statement);
         }
     }
 }
