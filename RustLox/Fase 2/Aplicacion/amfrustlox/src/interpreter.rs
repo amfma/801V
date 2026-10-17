@@ -1,11 +1,11 @@
 use std::fmt::{format, write};
 
-use crate::{error::{self, Error}, parser::{self, Expr, Operator, Stmt}};
+use crate::{enviroment::Enviroment, error::{self, Error}, parser::{self, Expr, Operator, Stmt}};
 
 type Output = Result<Value, error::Error>;
 
 pub struct Interpreter {
-
+    gobal: Enviroment
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Clone)]
@@ -39,7 +39,9 @@ impl std::fmt::Display for Value {
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            gobal : Enviroment::new(),
+        }
     }
 
     fn execute_statement(&mut self, statement: &Stmt) -> Result<(), Error> {
@@ -50,6 +52,14 @@ impl Interpreter {
             Stmt::Print { expr } => {
                 let value = self.evaluate_expression(expr)?;
                 println!("{}", value);
+            },
+            Stmt::Var { name, initializar } => {
+                let value = match initializar {
+                    Some(value) => self.evaluate_expression(value)?,
+                    None => Value::Nil,
+                };
+
+                self.gobal.define(name.to_string(), value);
             },
         }
 
@@ -97,6 +107,13 @@ impl Interpreter {
                     (Operator::Subtract, Value::Number(right)) => Ok(Value::Number(-right)),
                     (Operator::Negation, right) => Ok(Value::Boolean(!right.is_truthy())),
                     _ => return Err(Error::RuntimeError)
+                }
+            },
+            Expr::Variable { name } => {
+                let val = self.gobal.get(name.to_string());
+                match val {
+                    Some(value) => Ok(value),
+                    None => Err(Error::RuntimeError)
                 }
             },
         }

@@ -67,6 +67,9 @@ pub enum Expr {
         operator: Operator,
         right_value: Box<Expr>,
     },
+    Variable {
+        name: String
+    }
 }
 
 impl Expr {
@@ -108,6 +111,10 @@ impl Expr {
     pub fn grouping(expresion: Expr) -> Expr {
         Expr::Grouping { expr: expresion.into() }
     }
+
+    pub fn variable(name: String ) -> Expr {
+        Expr::Variable { name: name }
+    }
 }
 
 impl From<&Token> for Operator {
@@ -135,6 +142,10 @@ pub enum Stmt {
     },
     Print {
         expr: Expr
+    },
+    Var {
+        name: String,
+        initializar: Option<Expr>
     }
 }
 
@@ -173,6 +184,9 @@ impl Parser {
             Ok(Expr::bool(false))
         } else if self.match_tokens([TokenType::True]){
             Ok(Expr::bool(true))
+        } else if self.match_tokens([TokenType::Identifier]) {
+            let lexeme: String = self.previous().lexeme;
+            Ok(Expr::variable(lexeme))
          } else {
             Err(Error::ParserError { error_type: ParserError::SyntaxError })
         }
@@ -246,6 +260,7 @@ impl Parser {
         }
     }
 
+    /* Statements */
     fn statement(&mut self) -> Result<Stmt, Error> {
         if self.match_tokens([TokenType::Print]) {
             self.print_statement()
@@ -264,6 +279,30 @@ impl Parser {
         let expression: Expr = self.expression()?;
         self.consume(TokenType::Semicolon, "Expect ; after value".to_string())?;
         Ok(Stmt::Expression { expr: expression })
+    }
+
+    /* Declarations */
+    fn declaration(&mut self) -> Result<Stmt, Error> {
+        if self.match_tokens([TokenType::Var]) {
+            self.var_declaration()
+        } else {
+            self.statement()
+        }
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, Error> {
+        self.consume(TokenType::Identifier, "Expect variable name.".to_string())?;
+        let name = self.previous().lexeme;
+
+        let mut initializer = None;
+
+        if self.match_tokens([TokenType::Equal]) {
+            initializer = Some(self.expression()?);
+        }
+
+        self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.".to_string())?;
+
+        Ok(Stmt::Var { name: name, initializar: initializer })
     }
 
     //Helper methods
@@ -315,7 +354,7 @@ impl Parser {
     pub fn parse(&mut self) -> Result<Vec<Stmt>, Error> {
         let mut statements: Vec<Stmt> = vec![];
         while !self.is_at_end() {
-            statements.push(self.statement()?);
+            statements.push(self.declaration()?);
         }
 
         Ok(statements)

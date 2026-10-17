@@ -8,6 +8,7 @@ mod token;
 mod parser;
 mod error;
 mod interpreter;
+mod enviroment;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
