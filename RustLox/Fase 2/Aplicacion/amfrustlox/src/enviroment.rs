@@ -23,4 +23,12 @@ impl Enviroment {
             None
         }
     }
+
+    pub fn assign(&mut self, key: String, value: Value) {
+        if self.values.contains_key(&key) {
+            self.values.insert(key, value);
+        } else {
+            println!("Undefined variable {}.", key)
+        }
+    }
 }

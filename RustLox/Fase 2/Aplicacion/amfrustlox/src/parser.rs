@@ -1,5 +1,6 @@
 use std::fmt::Alignment::Right;
 
+use crate::parser::Expr::Variable;
 use crate::token::{self, Token, TokenType};
 use crate::error::{self, Error, ParserError};
 
@@ -69,6 +70,10 @@ pub enum Expr {
     },
     Variable {
         name: String
+    },
+    Assign {
+        name: String,
+        value: Box<Expr>
     }
 }
 
@@ -114,6 +119,10 @@ impl Expr {
 
     pub fn variable(name: String ) -> Expr {
         Expr::Variable { name: name }
+    }
+
+    pub fn assign(name: String, value: Expr) -> Expr {
+        Expr::Assign { name, value: value.into() }
     }
 }
 
@@ -213,7 +222,7 @@ impl Parser {
     */
 
     fn expression(&mut self) -> Result<Expr, Error> {
-        self.equality()
+        self.assignment()
     }
 
     fn equality(&mut self) -> Result<Expr, Error> {
@@ -257,6 +266,22 @@ impl Parser {
             Ok (Expr::binary(left, operator, right))
         } else {
             Ok(left)
+        }
+    }
+
+    fn assignment(&mut self) -> Result<Expr, Error> {
+        let expr = self.equality()?;
+
+        if self.match_tokens([TokenType::Equal]) {
+            let equal = self.previous().clone();
+            let value = self.assignment()?;
+
+            match &expr {
+                Expr::Variable { name } => Ok(Expr::assign(name.to_string(), value)),
+                _ => Err(Error::ParserError { error_type: ParserError::SyntaxError })
+            }
+        } else {
+            Ok(expr)
         }
     }
 

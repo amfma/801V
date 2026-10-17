@@ -116,6 +116,11 @@ impl Interpreter {
                     None => Err(Error::RuntimeError)
                 }
             },
+            Expr::Assign { name, value } => {
+                let value = self.evaluate_expression(&value)?;
+                self.gobal.assign(name.to_string(), value.clone());
+                Ok(value)
+            },
         }
     }
 
