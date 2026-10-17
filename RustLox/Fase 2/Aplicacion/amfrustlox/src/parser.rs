@@ -1,8 +1,8 @@
 use std::fmt::Alignment::Right;
 
+use crate::error::{self, Error, ParserError};
 use crate::parser::Expr::Variable;
 use crate::token::{self, Token, TokenType};
-use crate::error::{self, Error, ParserError};
 
 /*
 Operator enum describes the Lox operations, they roughly corresponds to the following lexemes
@@ -69,12 +69,12 @@ pub enum Expr {
         right_value: Box<Expr>,
     },
     Variable {
-        name: String
+        name: String,
     },
     Assign {
         name: String,
-        value: Box<Expr>
-    }
+        value: Box<Expr>,
+    },
 }
 
 impl Expr {
@@ -114,15 +114,20 @@ impl Expr {
     }
 
     pub fn grouping(expresion: Expr) -> Expr {
-        Expr::Grouping { expr: expresion.into() }
+        Expr::Grouping {
+            expr: expresion.into(),
+        }
     }
 
-    pub fn variable(name: String ) -> Expr {
+    pub fn variable(name: String) -> Expr {
         Expr::Variable { name: name }
     }
 
     pub fn assign(name: String, value: Expr) -> Expr {
-        Expr::Assign { name, value: value.into() }
+        Expr::Assign {
+            name,
+            value: value.into(),
+        }
     }
 }
 
@@ -147,18 +152,19 @@ impl From<&Token> for Operator {
 
 pub enum Stmt {
     Expression {
-        expr: Expr
+        expr: Expr,
     },
     Print {
-        expr: Expr
+        expr: Expr,
     },
     Var {
         name: String,
-        initializar: Option<Expr>
-    }
+        initializar: Option<Expr>,
+    },
+    Block {
+        statements: Vec<Stmt>,
+    },
 }
-
-
 
 #[derive(Debug)]
 pub struct Parser {
@@ -189,19 +195,21 @@ impl Parser {
         } else if self.match_tokens([TokenType::String]) {
             let lexeme: String = self.previous().lexeme;
             Ok(Expr::str(&lexeme))
-        } else if self.match_tokens([TokenType::False]) { 
+        } else if self.match_tokens([TokenType::False]) {
             Ok(Expr::bool(false))
-        } else if self.match_tokens([TokenType::True]){
+        } else if self.match_tokens([TokenType::True]) {
             Ok(Expr::bool(true))
         } else if self.match_tokens([TokenType::Identifier]) {
             let lexeme: String = self.previous().lexeme;
             Ok(Expr::variable(lexeme))
-         } else {
-            Err(Error::ParserError { error_type: ParserError::SyntaxError })
+        } else {
+            Err(Error::ParserError {
+                error_type: ParserError::SyntaxError,
+            })
         }
     }
 
-    /* 
+    /*
     An unary expression has one operand and one operation.
     The operations are the negation (!) and making the value negative (-)
     */
@@ -238,7 +246,12 @@ impl Parser {
 
     fn comparison(&mut self) -> Result<Expr, Error> {
         let left: Expr = self.term()?;
-        if self.match_tokens([TokenType::Greater, TokenType::GreaterEqual, TokenType::Less, TokenType::LessEqual]) {
+        if self.match_tokens([
+            TokenType::Greater,
+            TokenType::GreaterEqual,
+            TokenType::Less,
+            TokenType::LessEqual,
+        ]) {
             let operator: Operator = Operator::from(&self.previous());
             let right: Expr = self.term()?;
             Ok(Expr::binary(left, operator, right))
@@ -263,7 +276,7 @@ impl Parser {
         if self.match_tokens([TokenType::Slash, TokenType::Star]) {
             let operator: Operator = Operator::from(&self.previous());
             let right: Expr = self.unary()?;
-            Ok (Expr::binary(left, operator, right))
+            Ok(Expr::binary(left, operator, right))
         } else {
             Ok(left)
         }
@@ -278,7 +291,9 @@ impl Parser {
 
             match &expr {
                 Expr::Variable { name } => Ok(Expr::assign(name.to_string(), value)),
-                _ => Err(Error::ParserError { error_type: ParserError::SyntaxError })
+                _ => Err(Error::ParserError {
+                    error_type: ParserError::SyntaxError,
+                }),
             }
         } else {
             Ok(expr)
@@ -289,6 +304,10 @@ impl Parser {
     fn statement(&mut self) -> Result<Stmt, Error> {
         if self.match_tokens([TokenType::Print]) {
             self.print_statement()
+        } else if self.match_tokens([TokenType::LeftBrace]) {
+            Ok(Stmt::Block {
+                statements: self.block()?,
+            })
         } else {
             self.expression_statement()
         }
@@ -304,6 +323,18 @@ impl Parser {
         let expression: Expr = self.expression()?;
         self.consume(TokenType::Semicolon, "Expect ; after value".to_string())?;
         Ok(Stmt::Expression { expr: expression })
+    }
+
+    fn block(&mut self) -> Result<Vec<Stmt>, Error> {
+        let mut statements: Vec<Stmt> = vec![];
+
+        while !self.check_token(TokenType::RightBrace) && !self.is_at_end() {
+            statements.push(self.declaration()?);
+        }
+
+        self.consume(TokenType::RightBrace, "Expect '}' after block.".to_string());
+
+        Ok(statements)
     }
 
     /* Declarations */
@@ -325,9 +356,15 @@ impl Parser {
             initializer = Some(self.expression()?);
         }
 
-        self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.".to_string())?;
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.".to_string(),
+        )?;
 
-        Ok(Stmt::Var { name: name, initializar: initializer })
+        Ok(Stmt::Var {
+            name: name,
+            initializar: initializer,
+        })
     }
 
     //Helper methods
@@ -337,7 +374,7 @@ impl Parser {
 
     fn match_tokens<const N: usize>(&mut self, token_types: [TokenType; N]) -> bool {
         if !self.is_at_end() && token_types.contains(&self.tokens[self.current].token_type) {
-            self.current +=1;
+            self.current += 1;
             true
         } else {
             false
@@ -350,7 +387,7 @@ impl Parser {
 
     fn check_token(&mut self, token_type: TokenType) -> bool {
         if !self.is_at_end() && self.tokens[self.current].token_type == token_type {
-            self.current +=1;
+            self.current += 1;
             true
         } else {
             false
@@ -358,7 +395,7 @@ impl Parser {
     }
 
     fn previous(&self) -> Token {
-        self.tokens[self.current -1].clone()
+        self.tokens[self.current - 1].clone()
     }
 
     fn consume(&mut self, token_type: TokenType, message: String) -> Result<(), Error> {
@@ -370,8 +407,8 @@ impl Parser {
     }
 
     /* Output methods. This methods generate an output to be used by the interpreter
-        parse_expression is used for the simple evaluator/interpreter,
-        parse is the final method, it returns a collection of statements to be consumed by the interpreter */
+    parse_expression is used for the simple evaluator/interpreter,
+    parse is the final method, it returns a collection of statements to be consumed by the interpreter */
     pub fn parse_expression(&mut self) -> Result<Expr, Error> {
         self.expression()
     }
@@ -387,5 +424,5 @@ impl Parser {
 }
 
 pub struct ast {
-    pub start: Vec<Expr>
+    pub start: Vec<Expr>,
 }

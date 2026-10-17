@@ -2,14 +2,25 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::interpreter::Value;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Enviroment {
-    values: HashMap<String, Value>
+    values: HashMap<String, Value>,
+    enclosing: Option<Rc<RefCell<Enviroment>>>,
 }
 
 impl Enviroment {
     pub fn new() -> Self {
-        Enviroment { values: HashMap::new() }
+        Enviroment {
+            values: HashMap::new(),
+            enclosing: None,
+        }
+    }
+
+    pub fn with(enclosing: Rc<RefCell<Enviroment>>) -> Self {
+        Enviroment {
+            values: HashMap::new(),
+            enclosing: Some(enclosing),
+        }
     }
 
     pub fn define(&mut self, key: String, value: Value) {
@@ -19,7 +30,10 @@ impl Enviroment {
     pub fn get(&self, key: String) -> Option<Value> {
         if let Some(val) = self.values.get(&key) {
             Some(val.clone())
+        } else if let Some(enclosing) = &self.enclosing {
+            enclosing.as_ref().borrow().get(key)
         } else {
+            println!("Undefined variable {}.", key);
             None
         }
     }
@@ -27,6 +41,8 @@ impl Enviroment {
     pub fn assign(&mut self, key: String, value: Value) {
         if self.values.contains_key(&key) {
             self.values.insert(key, value);
+        } else if let Some(enclosing) = &self.enclosing {
+            enclosing.as_ref().borrow_mut().assign(key, value)
         } else {
             println!("Undefined variable {}.", key)
         }

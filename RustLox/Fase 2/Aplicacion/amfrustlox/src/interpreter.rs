@@ -1,4 +1,4 @@
-use std::fmt::{format, write};
+use std::{cell::RefCell, fmt::{format, write}, rc::Rc};
 
 use crate::{enviroment::Enviroment, error::{self, Error}, parser::{self, Expr, Operator, Stmt}};
 
@@ -61,9 +61,22 @@ impl Interpreter {
 
                 self.gobal.define(name.to_string(), value);
             },
+            Stmt::Block { statements } => {
+                let env = Enviroment::new();
+                self.execute_block(statements, env);
+            },
         }
 
         Ok(())
+    }
+
+    fn execute_block(&mut self, statements: &Vec<Stmt>, env: Enviroment) {
+        let previous = self.gobal.clone();
+        self.gobal = env;
+                for statement in statements {
+            self.execute_statement(statement);
+        }
+        self.gobal = previous;
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Output {
