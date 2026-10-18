@@ -74,7 +74,7 @@ pub enum Expr {
     Assign {
         name: String,
         value: Box<Expr>,
-    },
+    }
 }
 
 impl Expr {
@@ -144,7 +144,9 @@ impl From<&Token> for Operator {
             TokenType::Greater => Operator::Greater,
             TokenType::GreaterEqual => Operator::GreaterEqual,
             TokenType::Less => Operator::Less,
-            TokenType::LessEqual => Operator::Equal,
+            TokenType::LessEqual => Operator::LessEqual,
+            TokenType::And => Operator::And,
+            TokenType::Or => Operator::Or,
             _ => panic!("Invalid operator"),
         }
     }
@@ -164,6 +166,11 @@ pub enum Stmt {
     Block {
         statements: Vec<Stmt>,
     },
+    If {
+        condition: Expr,
+        then_branch: Box<Stmt>,
+        else_branch: Option<Box<Stmt>>
+    }
 }
 
 #[derive(Debug)]
@@ -283,7 +290,7 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, Error> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
 
         if self.match_tokens([TokenType::Equal]) {
             let equal = self.previous().clone();
@@ -300,6 +307,30 @@ impl Parser {
         }
     }
 
+    fn or(&mut self) -> Result<Expr, Error> {
+        let left = self.and()?;
+
+        if self.match_tokens([TokenType::Or]) {
+            let operator = Operator::from(&self.previous());
+            let right = self.and()?;
+            Ok(Expr::binary(left, operator, right))
+        } else {
+            Ok(left)
+        }
+    }
+
+    fn and(&mut self) -> Result<Expr, Error> {
+        let left = self.equality()?;
+
+        if self.match_tokens([TokenType::And]) {
+            let operator = Operator::from(&self.previous());
+            let right = self.equality()?;
+            Ok(Expr::binary(left, operator, right))
+        } else {
+            Ok(left)
+        }
+    }
+
     /* Statements */
     fn statement(&mut self) -> Result<Stmt, Error> {
         if self.match_tokens([TokenType::Print]) {
@@ -308,6 +339,8 @@ impl Parser {
             Ok(Stmt::Block {
                 statements: self.block()?,
             })
+        } else if self.match_tokens([TokenType::If]) {
+            self.if_statement()
         } else {
             self.expression_statement()
         }
@@ -332,9 +365,25 @@ impl Parser {
             statements.push(self.declaration()?);
         }
 
-        self.consume(TokenType::RightBrace, "Expect '}' after block.".to_string());
+        self.consume(TokenType::RightBrace, "Expect '}' after block.".to_string())?;
 
         Ok(statements)
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt, Error> {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'if'.".to_string())?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Expect ')' after if condition.".to_string())?;
+
+        let then_branch = self.statement()?;
+        let mut else_branch = None;
+
+        if (self.match_tokens([TokenType::Else])) {
+            else_branch = Some(self.statement()?);
+        }
+        let else_branch = else_branch.map(|x| Box::new(x));
+
+        Ok(Stmt::If { condition, then_branch: then_branch.into(), else_branch: else_branch})
     }
 
     /* Declarations */

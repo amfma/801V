@@ -288,10 +288,6 @@ impl Scanner {
 
 }
 
-pub fn scan(){
-
-}
-
 #[cfg(test)]
 mod tests {
     use std::iter::Scan;

@@ -65,6 +65,13 @@ impl Interpreter {
                 let env = Enviroment::new();
                 self.execute_block(statements, env);
             },
+            Stmt::If { condition, then_branch, else_branch } => {
+                if self.evaluate_expression(condition)?.is_truthy() {
+                    self.execute_statement(then_branch)?;
+                } else if else_branch.is_some() {
+                    self.execute_statement(then_branch)?;
+                }
+            },
         }
 
         Ok(())
@@ -103,6 +110,20 @@ impl Interpreter {
                     (_, Operator::LessEqual, _) => Ok(Value::Boolean(left <= right)),
                     (_, Operator::Equal, _) => Ok(Value::Boolean(left == right)),
                     (_, Operator::Inequal, _) => Ok(Value::Boolean(left != right)),
+                    (_, Operator::Or, _) => {
+                        if left.is_truthy() {
+                            Ok(left)
+                        } else {
+                            Ok(right)
+                        }
+                    },
+                    (_, Operator::And, _) => {
+                        if !left.is_truthy() {
+                            Ok(left)
+                        } else {
+                            Ok(right)
+                        }
+                    },
                     _ => {
                         return Err(Error::RuntimeError)
                     }
