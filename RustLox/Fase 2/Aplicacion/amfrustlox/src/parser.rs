@@ -152,6 +152,7 @@ impl From<&Token> for Operator {
     }
 }
 
+#[derive(Debug)]
 pub enum Stmt {
     Expression {
         expr: Expr,
@@ -170,7 +171,11 @@ pub enum Stmt {
         condition: Expr,
         then_branch: Box<Stmt>,
         else_branch: Option<Box<Stmt>>
-    }
+    },
+    While {
+        contion: Expr,
+        body: Box<Stmt>
+    },
 }
 
 #[derive(Debug)]
@@ -296,7 +301,7 @@ impl Parser {
             let equal = self.previous().clone();
             let value = self.assignment()?;
 
-            match &expr {
+            match expr {
                 Expr::Variable { name } => Ok(Expr::assign(name.to_string(), value)),
                 _ => Err(Error::ParserError {
                     error_type: ParserError::SyntaxError,
@@ -341,6 +346,10 @@ impl Parser {
             })
         } else if self.match_tokens([TokenType::If]) {
             self.if_statement()
+        } else if self.match_tokens([TokenType::While]) {
+            self.while_statement()
+        } else if self.match_tokens([TokenType::For]) {
+            self.for_statement()
         } else {
             self.expression_statement()
         }
@@ -364,6 +373,7 @@ impl Parser {
         while !self.check_token(TokenType::RightBrace) && !self.is_at_end() {
             statements.push(self.declaration()?);
         }
+        println!("{:?}", self.peek());
 
         self.consume(TokenType::RightBrace, "Expect '}' after block.".to_string())?;
 
@@ -378,13 +388,54 @@ impl Parser {
         let then_branch = self.statement()?;
         let mut else_branch = None;
 
-        if (self.match_tokens([TokenType::Else])) {
+        if self.match_tokens([TokenType::Else]) {
             else_branch = Some(self.statement()?);
         }
         let else_branch = else_branch.map(|x| Box::new(x));
 
         Ok(Stmt::If { condition, then_branch: then_branch.into(), else_branch: else_branch})
     }
+    
+    fn while_statement(&mut self) -> Result<Stmt, Error> {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'while'.".to_string())?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Expect ')' after condition.".to_string())?;
+
+        let body = self.statement()?;
+
+        Ok(Stmt::While { contion: condition, body: Box::new(body) })
+    }
+
+    fn for_statement(&mut self) -> Result<Stmt, Error> {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'for'.".to_string())?;
+
+        let initializer = if self.match_tokens([TokenType::Semicolon]) {
+            None
+        } else if self.match_tokens([TokenType::Var]) {
+            Some(self.var_declaration()?)
+        } else {
+            Some(self.expression_statement()?)
+        };
+
+        let condition = if !self.check_token(TokenType::Semicolon) {
+            self.expression()?
+        } else {
+            Expr::bool(true)
+        };
+        self.consume(TokenType::Semicolon, "Expect ';' after loop condition.".to_string())?;
+
+        let increment = if !self.check_token(TokenType::RightParen) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::RightParen, "Expected `)` after `for` clauses".to_string())?;
+
+        let body = Stmt::Block { statements: vec![self.statement()?, Stmt::Expression { expr: increment.expect("Error fatal") }] };
+        println!("{:?}", body);
+
+        Ok(Stmt::Block { statements: vec![initializer.expect("Error fatal"), Stmt::While { contion: condition, body: Box::new(body) }] })
+        }
 
     /* Declarations */
     fn declaration(&mut self) -> Result<Stmt, Error> {
@@ -449,6 +500,7 @@ impl Parser {
 
     fn consume(&mut self, token_type: TokenType, message: String) -> Result<(), Error> {
         if !self.check_token(token_type.clone()) {
+            println!("{}", message);
             Err(Error::syntax_error())
         } else {
             Ok(())

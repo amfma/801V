@@ -62,6 +62,7 @@ impl Interpreter {
                 self.gobal.define(name.to_string(), value);
             },
             Stmt::Block { statements } => {
+                println!("{:?}", statements);
                 let env = Enviroment::new();
                 self.execute_block(statements, env);
             },
@@ -72,6 +73,11 @@ impl Interpreter {
                     self.execute_statement(then_branch)?;
                 }
             },
+            Stmt::While { contion, body } => {
+                while self.evaluate_expression(contion)?.is_truthy() {
+                    self.execute_statement(body)?;
+                }
+            },
         }
 
         Ok(())
@@ -80,7 +86,8 @@ impl Interpreter {
     fn execute_block(&mut self, statements: &Vec<Stmt>, env: Enviroment) {
         let previous = self.gobal.clone();
         self.gobal = env;
-                for statement in statements {
+            for statement in statements {
+                println!("{:?}", statement);
             self.execute_statement(statement);
         }
         self.gobal = previous;
