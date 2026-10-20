@@ -378,7 +378,7 @@ impl Parser {
         let then_branch = self.statement()?;
         let mut else_branch = None;
 
-        if (self.match_tokens([TokenType::Else])) {
+        if self.match_tokens([TokenType::Else]) {
             else_branch = Some(self.statement()?);
         }
         let else_branch = else_branch.map(|x| Box::new(x));

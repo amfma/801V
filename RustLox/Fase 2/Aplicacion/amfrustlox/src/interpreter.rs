@@ -68,8 +68,8 @@ impl Interpreter {
             Stmt::If { condition, then_branch, else_branch } => {
                 if self.evaluate_expression(condition)?.is_truthy() {
                     self.execute_statement(then_branch)?;
-                } else if else_branch.is_some() {
-                    self.execute_statement(then_branch)?;
+                } else if let Some(branch) = else_branch {
+                    self.execute_statement(branch)?;
                 }
             },
         }
