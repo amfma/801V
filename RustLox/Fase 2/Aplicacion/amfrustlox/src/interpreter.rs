@@ -86,9 +86,8 @@ impl Interpreter {
     fn execute_block(&mut self, statements: &Vec<Stmt>, env: Enviroment) {
         let previous = self.gobal.clone();
         self.gobal = env;
-            for statement in statements {
-                println!("{:?}", statement);
-            self.execute_statement(statement);
+        for statement in statements {
+        self.execute_statement(statement);
         }
         self.gobal = previous;
     }
