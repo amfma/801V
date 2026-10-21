@@ -1,11 +1,12 @@
-use std::{cell::RefCell, fmt::{format, write}, rc::Rc};
+use std::{cell::{Ref, RefCell}, collections::HashMap, fmt::{format, write}, rc::Rc};
 
-use crate::{enviroment::Enviroment, error::{self, Error}, parser::{self, Expr, Operator, Stmt}};
+use crate::{enviroment::Enviroment, error::{self, Error::{self, RuntimeError}}, parser::{self, Expr, Operator, Stmt}};
 
 type Output = Result<Value, error::Error>;
 
 pub struct Interpreter {
-    gobal: Enviroment
+    values: HashMap<String, Value>,
+    enviroment: Rc<RefCell<Enviroment>>
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Clone)]
@@ -40,7 +41,8 @@ impl std::fmt::Display for Value {
 impl Interpreter {
     pub fn new() -> Self {
         Self {
-            gobal : Enviroment::new(),
+            values: HashMap::new(),
+            enviroment: Rc::new(RefCell::new(Enviroment::new(None)))
         }
     }
 
@@ -59,11 +61,10 @@ impl Interpreter {
                     None => Value::Nil,
                 };
 
-                self.gobal.define(name.to_string(), value);
+                self.enviroment.borrow_mut().define(name.to_string(), value);
             },
             Stmt::Block { statements } => {
-                println!("{:?}", statements);
-                let env = Enviroment::new();
+                let env = self.enviroment.clone();
                 self.execute_block(statements, env);
             },
             Stmt::If { condition, then_branch, else_branch } => {
@@ -74,8 +75,18 @@ impl Interpreter {
                 }
             },
             Stmt::While { contion, body } => {
-                while self.evaluate_expression(contion)?.is_truthy() {
-                    self.execute_statement(body)?;
+                loop {
+                    match self.evaluate_expression(contion) {
+                        
+                        Ok(expression) => {
+                            if expression.is_truthy() {
+                                self.execute_statement(body)?;
+                            } else {
+                                return Ok(());
+                            }
+                        },
+                        Err(_) => return Err(Error::RuntimeError),
+                    }
                 }
             },
         }
@@ -83,13 +94,14 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_block(&mut self, statements: &Vec<Stmt>, env: Enviroment) {
-        let previous = self.gobal.clone();
-        self.gobal = env;
+    fn execute_block(&mut self, statements: &Vec<Stmt>, env: Rc<RefCell<Enviroment>>) {
+        let new_env = Rc::new(RefCell::new(Enviroment::new(Some(env))));
+        let previous = self.enviroment.clone();
+        self.enviroment = new_env;
         for statement in statements {
-        self.execute_statement(statement);
+            self.execute_statement(statement);
         }
-        self.gobal = previous;
+        self.enviroment = previous;
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Output {
@@ -150,15 +162,15 @@ impl Interpreter {
                 }
             },
             Expr::Variable { name } => {
-                let val = self.gobal.get(name.to_string());
+                let val = self.enviroment.borrow().get(name.to_string());
                 match val {
-                    Some(value) => Ok(value),
-                    None => Err(Error::RuntimeError)
+                    Some(v) => Ok(v),
+                    None => Err(Error::RuntimeError),
                 }
             },
             Expr::Assign { name, value } => {
                 let value = self.evaluate_expression(&value)?;
-                self.gobal.assign(name.to_string(), value.clone());
+                self.enviroment.borrow_mut().assign(name.to_string(), value.clone());
                 Ok(value)
             },
         }

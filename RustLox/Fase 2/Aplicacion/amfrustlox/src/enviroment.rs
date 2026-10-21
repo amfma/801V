@@ -9,17 +9,10 @@ pub struct Enviroment {
 }
 
 impl Enviroment {
-    pub fn new() -> Self {
-        Enviroment {
-            values: HashMap::new(),
-            enclosing: None,
-        }
-    }
-
-    pub fn with(enclosing: Rc<RefCell<Enviroment>>) -> Self {
-        Enviroment {
-            values: HashMap::new(),
-            enclosing: Some(enclosing),
+    pub fn new(enclosing: Option<Rc<RefCell<Enviroment>>>) -> Self {
+        match enclosing {
+            Some(en) => {Enviroment { values: HashMap::new(), enclosing: Some(en) }},
+            None => {Enviroment { values: HashMap::new(), enclosing: None }},
         }
     }
 
@@ -41,6 +34,7 @@ impl Enviroment {
     pub fn assign(&mut self, key: String, value: Value) {
         if self.values.contains_key(&key) {
             self.values.insert(key, value);
+            return
         } else if let Some(enclosing) = &self.enclosing {
             enclosing.as_ref().borrow_mut().assign(key, value)
         } else {

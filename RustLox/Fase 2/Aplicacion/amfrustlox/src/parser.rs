@@ -212,7 +212,7 @@ impl Parser {
         } else if self.match_tokens([TokenType::True]) {
             Ok(Expr::bool(true))
         } else if self.match_tokens([TokenType::Identifier]) {
-            let lexeme: String = self.previous().lexeme;
+            let lexeme: String = self.previous().lexeme.clone();
             Ok(Expr::variable(lexeme))
         } else {
             Err(Error::ParserError {
@@ -370,12 +370,11 @@ impl Parser {
     fn block(&mut self) -> Result<Vec<Stmt>, Error> {
         let mut statements: Vec<Stmt> = vec![];
 
-        while !self.check_token(TokenType::RightBrace) && !self.is_at_end() {
+        while !self.check_special(TokenType::RightBrace) && !self.is_at_end() {
             statements.push(self.declaration()?);
         }
-        println!("{:?}", self.peek());
 
-        self.consume(TokenType::RightBrace, "Expect '}' after block.".to_string())?;
+        self.consume(TokenType::RightBrace, "Expect '}' after block.".to_string())?;;
 
         Ok(statements)
     }
@@ -417,23 +416,28 @@ impl Parser {
             Some(self.expression_statement()?)
         };
 
-        let condition = if !self.check_token(TokenType::Semicolon) {
+        println!("{:?}", initializer);
+
+        let condition = if !self.check_special(TokenType::Semicolon) {
             self.expression()?
         } else {
-            Expr::bool(true)
+            Expr::Nil
         };
         self.consume(TokenType::Semicolon, "Expect ';' after loop condition.".to_string())?;
 
-        let increment = if !self.check_token(TokenType::RightParen) {
+        println!("{:?}", condition);
+
+        let increment = if !self.check_special(TokenType::RightParen) {
             Some(self.expression()?)
         } else {
             None
         };
         self.consume(TokenType::RightParen, "Expected `)` after `for` clauses".to_string())?;
 
+        println!("{:?}", increment);
+
         let body = Stmt::Block { statements: vec![self.statement()?, Stmt::Expression { expr: increment.expect("Error fatal") }] };
         println!("{:?}", body);
-
         Ok(Stmt::Block { statements: vec![initializer.expect("Error fatal"), Stmt::While { contion: condition, body: Box::new(body) }] })
         }
 
@@ -488,6 +492,14 @@ impl Parser {
     fn check_token(&mut self, token_type: TokenType) -> bool {
         if !self.is_at_end() && self.tokens[self.current].token_type == token_type {
             self.current += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn check_special(&mut self, token_type: TokenType) -> bool {
+        if !self.is_at_end() && self.tokens[self.current].token_type == token_type {
             true
         } else {
             false
