@@ -1,20 +1,54 @@
-use std::{cell::{Ref, RefCell}, collections::HashMap, fmt::{format, write}, rc::Rc};
+use std::{cell::{Ref, RefCell}, collections::HashMap, fmt::{Alignment::Right, format, write}, io::Write, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
+use std::hash::Hash;
+use std::ptr;
 
-use crate::{enviroment::Enviroment, error::{self, Error::{self, RuntimeError}}, parser::{self, Expr, Operator, Stmt}};
+use crate::{callable::{self, BoxedFunction, Callable, CallableType, Function, Native}, enviroment::Enviroment, error::{self, Error::{self, RuntimeError}}, parser::{self, Expr, Operator, Stmt}};
 
 type Output = Result<Value, error::Error>;
 
 pub struct Interpreter {
     values: HashMap<String, Value>,
-    enviroment: Rc<RefCell<Enviroment>>
+    enviroment: Rc<RefCell<Enviroment>>,
+    globals: Rc<RefCell<Enviroment>>,
+    stdout: Rc<RefCell<dyn Write>>
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Nil,
     Boolean(bool),
     String(String),
-    Number(f64)
+    Number(f64),
+    Callable(Rc<dyn Callable>)
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
+            (Self::String(l0), Self::String(r0)) => l0 == r0,
+            (Self::Number(l0), Self::Number(r0)) => l0 == r0,
+            (Self::Callable(l0), Self::Callable(r0)) => ptr::eq(l0, r0),
+            (Value::Nil, Value::Nil) => true,
+            (Value::Nil, _) => false,
+            (_, Value::Nil) => false,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Nil => 0.hash(state),
+            Value::Boolean(value) => value.hash(state),
+            Value::String(value) => value.hash(state),
+            Value::Number(value) => value.to_bits().hash(state),
+            Value::Callable(callable) => Rc::as_ptr(callable).hash(state),
+        }
+    }
 }
 
 impl Value {
@@ -33,17 +67,28 @@ impl std::fmt::Display for Value {
             Value::Boolean(value) => write!(f, "{value}", ),
             Value::String(value) => write!(f, "{value}"),
             Value::Number(value) => write!(f, "{value}"),
+            Value::Callable(value) => write!(f, "{:?}", value)
         }
     }
 } 
 
 
 impl Interpreter {
-    pub fn new() -> Self {
-        Self {
-            values: HashMap::new(),
-            enviroment: Rc::new(RefCell::new(Enviroment::new(None)))
-        }
+    pub fn new(stdout: Rc<RefCell<dyn Write>>) -> Self {
+        let globals = Rc::new(RefCell::new(Enviroment::new(None)));
+        let clock_out = stdout.clone();
+
+        let clock: BoxedFunction = Box::new(move |_| {
+            let start = SystemTime::now();
+            let since_epoch = start.duration_since(UNIX_EPOCH).unwrap();
+            writeln!(clock_out.borrow_mut(), "{:?}\n", since_epoch).unwrap();
+            Ok(Value::Nil)
+        });
+
+        let clock_callable = Native::new(clock, String::from("clock"), 0);
+        globals.borrow_mut().define("clock".to_string(), Value::Callable(Rc::new(clock_callable)));
+
+        Interpreter { values: HashMap::new(), enviroment: globals.clone(), globals: globals, stdout }
     }
 
     fn execute_statement(&mut self, statement: &Stmt) -> Result<(), Error> {
@@ -89,6 +134,15 @@ impl Interpreter {
                     }
                 }
             },
+            Stmt::Function { name, params, body } => {
+                let boxed_function = Rc::new(Function::new(self.enviroment.clone(), name, params, body));
+                let callable = Value::Callable(boxed_function);
+                self.enviroment.borrow_mut().define(name.lexeme.clone(), callable);
+            },
+            Stmt::Return { keyword, value } => {
+                let value = self.evaluate_expression(value)?;
+                return Err(Error::Return(value))
+            },
         }
 
         Ok(())
@@ -102,6 +156,21 @@ impl Interpreter {
             self.execute_statement(statement);
         }
         self.enviroment = previous;
+    }
+
+    pub fn execute_function_block(&mut self, statements: &Vec<Stmt>, env: Rc<RefCell<Enviroment>>) -> Result<(), Error> {
+        let current = self.enviroment.clone();
+        self.enviroment = env;
+
+        for statement in statements {
+            if let err @ Err(_) = self.execute_statement(statement) {
+                self.enviroment = current;
+                return err;
+            }
+        }
+
+        self.enviroment = current;
+        Ok(())
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Output {
@@ -121,11 +190,20 @@ impl Interpreter {
                             return Ok(Value::Number(left / right));
                         }
                     },
-                    (Value::String(left), Operator::Add, Value::String(right)) => Ok(Value::String(format!("{left} {right}"))),
-                    (_, Operator::Greater, _) => Ok(Value::Boolean(left > right)),
-                    (_, Operator::GreaterEqual, _) => Ok(Value::Boolean(left >= right)),
-                    (_, Operator::Less, _) => Ok(Value::Boolean(left < right)),
-                    (_, Operator::LessEqual, _) => Ok(Value::Boolean(left <= right)),
+                    (Value::String(left), Operator::Add, Value::String(right)) => Ok(Value::String(String::from(left) + right)),
+                    /* Number comparasions */
+                    (Value::Number(left), Operator::LessEqual, Value::Number(right)) => Ok(Value::Boolean(left <= right)),
+                    (Value::Number(left), Operator::GreaterEqual, Value::Number(right)) => Ok(Value::Boolean(left >= right)),
+                    (Value::Number(left), Operator::Greater, Value::Number(right)) => Ok(Value::Boolean(left > right)),
+                    (Value::Number(left), Operator::Less, Value::Number(right)) => Ok(Value::Boolean(left < right)),
+                    /* String comparisions */
+                    (Value::String(left), Operator::Greater, Value::String(right)) => Ok(Value::Boolean(left > right)),
+                    (Value::String(left), Operator::GreaterEqual, Value::String(right)) => Ok(Value::Boolean(left >= right)),
+                    (Value::String(left), Operator::Less, Value::String(right)) => Ok(Value::Boolean(left < right)),
+                    (Value::String(left), Operator::LessEqual, Value::String(right)) => {
+                        Ok(Value::Boolean(left <= right))
+                    },
+                    /* Type agnostic comparisions */
                     (_, Operator::Equal, _) => Ok(Value::Boolean(left == right)),
                     (_, Operator::Inequal, _) => Ok(Value::Boolean(left != right)),
                     (_, Operator::Or, _) => {
@@ -173,14 +251,23 @@ impl Interpreter {
                 self.enviroment.borrow_mut().assign(name.to_string(), value.clone());
                 Ok(value)
             },
-        }
-    }
-
-    pub fn interpret_expression(&mut self, expression: &Expr) {
-        let result = self.evaluate_expression(expression);
-        match result {
-            Ok(value) => println!("{}", value),
-            Err(_) => println!("Error"),
+            Expr::Call { callee, paren, arguments } => {
+                let callee = self.evaluate_expression(callee)?;
+                let mut evaluated_arguments = vec![];
+                for arg in arguments {
+                    evaluated_arguments.push(self.evaluate_expression(arg)?);
+                }
+                match callee {
+                    Value::Callable(function) => {
+                        if function.arity() != evaluated_arguments.len() {
+                            Err(Error::RuntimeError)
+                        } else {
+                        function.call(self, &evaluated_arguments)
+                        }
+                    },
+                    _ => Err(Error::RuntimeError)
+                }
+            },
         }
     }
 

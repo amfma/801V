@@ -1,4 +1,4 @@
-use std::{env, fmt::format, io::{self, Write, stdin}};
+use std::{cell::{Ref, RefCell}, env, fmt::format, io::{self, Write, stdin}, rc::Rc};
 
 use crate::token::{Scanner, Token};
 use crate::parser::{Expr, Parser};
@@ -9,6 +9,7 @@ mod parser;
 mod error;
 mod interpreter;
 mod enviroment;
+mod callable;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -19,7 +20,7 @@ fn main() {
 }
 
 fn run_rompt() {
-    let mut interpreter: Interpreter = Interpreter::new();
+    let mut interpreter: Interpreter = Interpreter::new(Rc::new(RefCell::new(io::stdout())));
 
     loop {
         let mut buffer: String = String::new();

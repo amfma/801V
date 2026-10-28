@@ -1,11 +1,14 @@
+use crate::interpreter::Value;
+
 pub enum Error {
     ParserError {error_type: ParserError},
-    RuntimeError
+    RuntimeError,
+    Return(Value)
 }
 
 pub enum ParserError {
     SyntaxError,
-    UnterminatedCharacter
+    UnterminatedCharacter,
 }
 
 impl Error {
