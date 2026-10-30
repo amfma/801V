@@ -131,7 +131,6 @@ impl<'a> Resolver<'a> {
                 self.resolve_function(name, params, body, FunctionType::Function)?;
             },
             Stmt::Return { keyword, value } => {
-                println!("inside return");
                 match value {
                     Expr::Nil => {
                         return Ok(());
@@ -164,7 +163,6 @@ impl<'a> Resolver<'a> {
                 self.resolve_expression(right_value)
             },
             Expr::Variable { name } => {
-                println!("inside variable visit");
                 if let Some(last) = self.scopes.last() {
                     if let Some(State::Declared) = last.get(&name.lexeme) {
                         return Err(Error::RuntimeError)

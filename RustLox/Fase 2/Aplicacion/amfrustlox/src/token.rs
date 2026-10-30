@@ -1,4 +1,12 @@
 use std::{clone, fmt::format, string};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/* Token ID Count */
+static NEXT_TOKEN_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn next_token_id() -> usize {
+    NEXT_TOKEN_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -92,7 +100,6 @@ pub struct Scanner {
     current: usize,
     line: usize,
     error: Vec<i32>,
-    token_id: usize
 }
 
 impl Scanner {
@@ -104,7 +111,6 @@ impl Scanner {
             current: 0,
             line: 1,
             error: vec![],
-            token_id: 0
         }
     }
 
@@ -119,7 +125,7 @@ impl Scanner {
         }
 
         self.tokens
-            .push(Token::new(TokenType::EOF, "", self.line, Literal::None, self.token_id+1));
+            .push(Token::new(TokenType::EOF, "", self.line, Literal::None, next_token_id()));
 
         if self.error.len() == 0 {
             Ok(self.tokens)
@@ -130,9 +136,8 @@ impl Scanner {
 
     fn add_token(&mut self, token_type: TokenType, literal: Literal) {
         let lexeme: String = self.source[self.start..self.current].iter().collect();
-        self.token_id += 1;
         self.tokens
-            .push(Token::new(token_type, lexeme, self.line, literal, self.token_id));
+            .push(Token::new(token_type, lexeme, self.line, literal, next_token_id()));
         
     }
 

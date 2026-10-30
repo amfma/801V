@@ -33,16 +33,15 @@ fn run_rompt() {
         let scanner = Scanner::new(&buffer);
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
         let mut parser = Parser::new(tokens);
-        let mut ast = parser.parse();
-        /* 
-        match ast {
-            Ok(statements) => ast = resolver.resolve(&statements),
-            Err(_) => println!("Parsing Error"),
-        }*/
-
-        match ast {
-            Ok(statements) => interpreter.interpret(&statements),
-            Err(_) => println!("Resolver Error"),
+        match parser.parse() {
+            Ok(statements) => {
+                let resolved = Resolver::new(&mut interpreter).resolve(&statements);
+                match resolved {
+                    Ok(statements) => interpreter.interpret(&statements),
+                    Err(_) => println!("Resolver error")
+                }
+            }
+            Err(_) => println!("Parser error"),
         }
     }
 }
