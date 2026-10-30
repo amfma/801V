@@ -1,6 +1,6 @@
 use std::{cell::{Ref, RefCell}, env, fmt::format, io::{self, Write, stdin}, rc::Rc};
 
-use crate::token::{Scanner, Token};
+use crate::{resolver::Resolver, token::{Scanner, Token}};
 use crate::parser::{Expr, Parser};
 use crate::interpreter::{Interpreter};
 
@@ -10,6 +10,7 @@ mod error;
 mod interpreter;
 mod enviroment;
 mod callable;
+mod resolver;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -23,6 +24,7 @@ fn run_rompt() {
     let mut interpreter: Interpreter = Interpreter::new(Rc::new(RefCell::new(io::stdout())));
 
     loop {
+        let mut resolver = Resolver::new(&mut interpreter) ;
         let mut buffer: String = String::new();
         print!(">>>");
         io::stdout().flush().expect("Console flush error");
@@ -31,10 +33,16 @@ fn run_rompt() {
         let scanner = Scanner::new(&buffer);
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
         let mut parser = Parser::new(tokens);
-        let ast = parser.parse();
+        let mut ast = parser.parse();
+        /* 
+        match ast {
+            Ok(statements) => ast = resolver.resolve(&statements),
+            Err(_) => println!("Parsing Error"),
+        }*/
+
         match ast {
             Ok(statements) => interpreter.interpret(&statements),
-            Err(_) => println!("Error"),
+            Err(_) => println!("Resolver Error"),
         }
     }
 }

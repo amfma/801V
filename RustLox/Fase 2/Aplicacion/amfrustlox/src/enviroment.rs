@@ -21,13 +21,22 @@ impl Enviroment {
     }
 
     pub fn get(&self, key: String) -> Option<Value> {
+        println!("{}", key);
         if let Some(val) = self.values.get(&key) {
             Some(val.clone())
         } else if let Some(enclosing) = &self.enclosing {
             enclosing.as_ref().borrow().get(key)
         } else {
-            println!("Undefined variable {}.", key);
+            println!("Undefined variable at get {}.", key);
             None
+        }
+    }
+
+    pub fn get_at(&self, distance: usize, key: String) -> Option<Value> {
+        if distance == 0 {
+            self.get(key)
+        } else {
+            self.enclosing.as_ref().and_then(|parent| parent.borrow().get_at(distance -1, key))
         }
     }
 
@@ -38,7 +47,23 @@ impl Enviroment {
         } else if let Some(enclosing) = &self.enclosing {
             enclosing.as_ref().borrow_mut().assign(key, value)
         } else {
-            println!("Undefined variable {}.", key)
+            println!("Undefined variable at assign {}.", key)
         }
     }
+
+    pub fn assign_at(&mut self, key: String, distance: usize, value: Value) {
+        if distance == 0 {
+            if let Some(val) = self.values.get_mut(&key) {
+                *val = value;
+            } else {
+                println!("undefined Variable at assign_at inside {}", &key);
+            }
+        } else if let Some(parent) = &self.enclosing {
+            parent.as_ref().borrow_mut().assign_at(key, distance -1, value);
+        } else {
+            println!("undefined variable at assign_at outside {}", &key);
+        }
+    }
+
+
 }

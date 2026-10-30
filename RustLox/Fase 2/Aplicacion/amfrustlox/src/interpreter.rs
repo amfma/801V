@@ -2,15 +2,15 @@ use std::{cell::{Ref, RefCell}, collections::HashMap, fmt::{Alignment::Right, fo
 use std::hash::Hash;
 use std::ptr;
 
-use crate::{callable::{self, BoxedFunction, Callable, CallableType, Function, Native}, enviroment::Enviroment, error::{self, Error::{self, RuntimeError}}, parser::{self, Expr, Operator, Stmt}};
+use crate::{callable::{self, BoxedFunction, Callable, CallableType, Function, Native}, enviroment::Enviroment, error::{self, Error::{self, RuntimeError}}, parser::{self, Expr, Operator, Stmt}, token::{Token, TokenIndex}};
 
 type Output = Result<Value, error::Error>;
 
 pub struct Interpreter {
-    values: HashMap<String, Value>,
     enviroment: Rc<RefCell<Enviroment>>,
     globals: Rc<RefCell<Enviroment>>,
-    stdout: Rc<RefCell<dyn Write>>
+    stdout: Rc<RefCell<dyn Write>>,
+    locals: HashMap<TokenIndex, usize>
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +88,7 @@ impl Interpreter {
         let clock_callable = Native::new(clock, String::from("clock"), 0);
         globals.borrow_mut().define("clock".to_string(), Value::Callable(Rc::new(clock_callable)));
 
-        Interpreter { values: HashMap::new(), enviroment: globals.clone(), globals: globals, stdout }
+        Interpreter { locals: HashMap::new(), enviroment: globals.clone(), globals: globals, stdout }
     }
 
     fn execute_statement(&mut self, statement: &Stmt) -> Result<(), Error> {
@@ -106,7 +106,7 @@ impl Interpreter {
                     None => Value::Nil,
                 };
 
-                self.enviroment.borrow_mut().define(name.to_string(), value);
+                self.enviroment.borrow_mut().define(name.lexeme.to_string(), value);
             },
             Stmt::Block { statements } => {
                 let env = self.enviroment.clone();
@@ -240,15 +240,21 @@ impl Interpreter {
                 }
             },
             Expr::Variable { name } => {
-                let val = self.enviroment.borrow().get(name.to_string());
-                match val {
-                    Some(v) => Ok(v),
+                match self.lookup_variable(name) {
+                    Some(value) => Ok(value),
                     None => Err(Error::RuntimeError),
                 }
             },
             Expr::Assign { name, value } => {
                 let value = self.evaluate_expression(&value)?;
-                self.enviroment.borrow_mut().assign(name.to_string(), value.clone());
+                match self.locals.get(&name.idx) {
+                    Some(distance) => {
+                        self.enviroment.borrow_mut().assign_at(name.lexeme.clone(), *distance, value.clone());
+                    },
+                    None => {
+                        self.enviroment.borrow_mut().assign(name.lexeme.clone(), value.clone());
+                    },
+                }
                 Ok(value)
             },
             Expr::Call { callee, paren, arguments } => {
@@ -269,6 +275,17 @@ impl Interpreter {
                 }
             },
         }
+    }
+
+    fn lookup_variable(&self, token: &Token) -> Option<Value> {
+        match self.locals.get(&token.idx) {
+            Some(distance) => self.enviroment.borrow().get_at(*distance, token.lexeme.clone()),
+            None => self.globals.borrow().get(token.lexeme.clone()),
+        }
+    }
+
+    pub fn resolve(&mut self, token: &Token, depth: usize) {
+        self.locals.insert(token.idx, depth);
     }
 
     pub fn interpret(&mut self, statements: &Vec<Stmt>) {

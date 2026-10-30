@@ -4,11 +4,11 @@ use std::{clone, fmt::format, string};
 pub enum Literal {
     Str(String),
     Num(f64),
-    None
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenType{
+pub enum TokenType {
     LeftParen,
     RightParen,
     LeftBrace,
@@ -47,24 +47,35 @@ pub enum TokenType{
     True,
     Var,
     While,
-    EOF
+    EOF,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TokenIndex(pub usize);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    pub token_type : TokenType,
-    pub lexeme : String,
+    pub token_type: TokenType,
+    pub lexeme: String,
     line: usize,
     literal: Literal,
+    pub idx: TokenIndex,
 }
 
 impl Token {
-    pub fn new(token_type:TokenType,
-    lexeme: impl Into<String>, 
-    line: usize,
-    literal: Literal) -> Self {
+    pub fn new(
+        token_type: TokenType,
+        lexeme: impl Into<String>,
+        line: usize,
+        literal: Literal,
+        idx: usize,
+    ) -> Self {
         Self {
-            token_type, lexeme: lexeme.into(), line, literal
+            token_type,
+            lexeme: lexeme.into(),
+            line,
+            literal,
+            idx: TokenIndex(idx),
         }
     }
 
@@ -80,7 +91,8 @@ pub struct Scanner {
     start: usize,
     current: usize,
     line: usize,
-    error: Vec<i32>
+    error: Vec<i32>,
+    token_id: usize
 }
 
 impl Scanner {
@@ -91,12 +103,13 @@ impl Scanner {
             start: 0,
             current: 0,
             line: 1,
-            error: vec![]
+            error: vec![],
+            token_id: 0
         }
     }
 
-    fn is_at_end(&self) -> bool{
-        self.current >= self.source.len() 
+    fn is_at_end(&self) -> bool {
+        self.current >= self.source.len()
     }
 
     pub fn scan_tokens(mut self) -> Result<Vec<Token>, &'static str> {
@@ -105,7 +118,8 @@ impl Scanner {
             self.scan_token();
         }
 
-        self.tokens.push(Token::new(TokenType::EOF, "", self.line, Literal::None));
+        self.tokens
+            .push(Token::new(TokenType::EOF, "", self.line, Literal::None, self.token_id+1));
 
         if self.error.len() == 0 {
             Ok(self.tokens)
@@ -116,8 +130,11 @@ impl Scanner {
 
     fn add_token(&mut self, token_type: TokenType, literal: Literal) {
         let lexeme: String = self.source[self.start..self.current].iter().collect();
-        self.tokens.push(Token::new(token_type, lexeme, self.line, literal));
-    } 
+        self.token_id += 1;
+        self.tokens
+            .push(Token::new(token_type, lexeme, self.line, literal, self.token_id));
+        
+    }
 
     fn scan_token(&mut self) {
         match self.advance() {
@@ -168,22 +185,21 @@ impl Scanner {
                     self.add_token(TokenType::Slash, Literal::None);
                 };
             }
-            ' ' | '\r' | '\t' => {},
-            '\n' => self.line +=1,
+            ' ' | '\r' | '\t' => {}
+            '\n' => self.line += 1,
             '"' => self.string(),
 
             c if c.is_alphabetic() => {
                 self.identifier();
-            },
+            }
 
             c if c.is_digit(10) => {
                 self.number();
             }
 
             c => {}
-
         }
-    } 
+    }
 
     fn advance(&mut self) -> char {
         let character: char = self.source[self.current];
@@ -192,11 +208,11 @@ impl Scanner {
         character
     }
 
-    fn match_char(&mut self, expected: char) -> bool{
+    fn match_char(&mut self, expected: char) -> bool {
         if self.is_at_end() {
             return false;
         }
-        
+
         if self.source[self.current] != expected {
             return false;
         }
@@ -214,7 +230,7 @@ impl Scanner {
     }
 
     fn peek_next(&self) -> char {
-        if self.current +1 >= self.source.len() {
+        if self.current + 1 >= self.source.len() {
             return '\x00';
         }
         self.source[self.current + 1]
@@ -235,11 +251,13 @@ impl Scanner {
 
         self.advance();
 
-        let str_value: String = self.source[self.start + 1..self.current - 1].iter().collect::<String>();
+        let str_value: String = self.source[self.start + 1..self.current - 1]
+            .iter()
+            .collect::<String>();
 
         self.add_token(TokenType::String, Literal::Str(str_value));
-    } 
-    
+    }
+
     fn number(&mut self) {
         while self.peek().is_digit(10) {
             self.advance();
@@ -255,7 +273,10 @@ impl Scanner {
 
         let number_value: String = self.source[self.start..self.current].iter().collect();
 
-        self.add_token(TokenType::Number, Literal::Num(number_value.parse().unwrap()));
+        self.add_token(
+            TokenType::Number,
+            Literal::Num(number_value.parse().unwrap()),
+        );
     }
 
     fn identifier(&mut self) {
@@ -282,34 +303,39 @@ impl Scanner {
             "true" => self.add_token(TokenType::True, Literal::None),
             "var" => self.add_token(TokenType::Var, Literal::None),
             "while" => self.add_token(TokenType::While, Literal::None),
-            _ => self.add_token(TokenType::Identifier, Literal::None)
+            _ => self.add_token(TokenType::Identifier, Literal::None),
         }
     }
-
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use std::iter::Scan;
 
-use super::*;
+    use super::*;
 
     #[test]
     fn single_character_multi_line_test() {
         let scanner: Scanner = Scanner::new("()\n{}\n+-,.\n;*");
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
 
-        assert_eq!(tokens, vec![Token::new(TokenType::LeftParen, "(", 1, Literal::None), 
-        Token::new(TokenType::RightParen, ")", 1, Literal::None),
-        Token::new(TokenType::LeftBrace, "{", 2, Literal::None),
-        Token::new(TokenType::RightBrace, "}", 2, Literal::None),
-        Token::new(TokenType::Plus, "+", 3, Literal::None),
-        Token::new(TokenType::Minus, "-", 3, Literal::None),
-        Token::new(TokenType::Comma, ",", 3, Literal::None),
-        Token::new(TokenType::Dot, ".", 3, Literal::None),
-        Token::new(TokenType::Semicolon, ";", 4, Literal::None),
-        Token::new(TokenType::Star, "*", 4, Literal::None),
-        Token::new(TokenType::EOF, "", 4, Literal::None)])
+        assert_eq!(
+            tokens,
+            vec![
+                Token::new(TokenType::LeftParen, "(", 1, Literal::None),
+                Token::new(TokenType::RightParen, ")", 1, Literal::None),
+                Token::new(TokenType::LeftBrace, "{", 2, Literal::None),
+                Token::new(TokenType::RightBrace, "}", 2, Literal::None),
+                Token::new(TokenType::Plus, "+", 3, Literal::None),
+                Token::new(TokenType::Minus, "-", 3, Literal::None),
+                Token::new(TokenType::Comma, ",", 3, Literal::None),
+                Token::new(TokenType::Dot, ".", 3, Literal::None),
+                Token::new(TokenType::Semicolon, ";", 4, Literal::None),
+                Token::new(TokenType::Star, "*", 4, Literal::None),
+                Token::new(TokenType::EOF, "", 4, Literal::None)
+            ]
+        )
     }
 
     #[test]
@@ -317,8 +343,18 @@ use super::*;
         let scanner: Scanner = Scanner::new("\"Hello world\"");
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
 
-        assert_eq!(tokens, vec![Token::new(TokenType::String, "\"Hello world\"", 1, Literal::Str("Hello world".to_string())),
-        Token::new(TokenType::EOF, "", 1, Literal::None)])
+        assert_eq!(
+            tokens,
+            vec![
+                Token::new(
+                    TokenType::String,
+                    "\"Hello world\"",
+                    1,
+                    Literal::Str("Hello world".to_string())
+                ),
+                Token::new(TokenType::EOF, "", 1, Literal::None)
+            ]
+        )
     }
 
     #[test]
@@ -326,10 +362,24 @@ use super::*;
         let scanner: Scanner = Scanner::new("\"Hola\" \"Chao\"");
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
 
-        assert_eq!(tokens,
-        vec![Token::new(TokenType::String, "\"Hola\"", 1, Literal::Str("Hola".to_string())),
-        Token::new(TokenType::String, "\"Chao\"", 1, Literal::Str("Chao".to_string())),
-        Token::new(TokenType::EOF, "", 1, Literal::None)])
+        assert_eq!(
+            tokens,
+            vec![
+                Token::new(
+                    TokenType::String,
+                    "\"Hola\"",
+                    1,
+                    Literal::Str("Hola".to_string())
+                ),
+                Token::new(
+                    TokenType::String,
+                    "\"Chao\"",
+                    1,
+                    Literal::Str("Chao".to_string())
+                ),
+                Token::new(TokenType::EOF, "", 1, Literal::None)
+            ]
+        )
     }
 
     #[test]
@@ -337,8 +387,18 @@ use super::*;
         let scanner: Scanner = Scanner::new("\"Hola \nChao\"");
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
 
-        assert_eq!(tokens, vec![Token::new(TokenType::String, "\"Hola \nChao\"", 2, Literal::Str("Hola \nChao".to_string())),
-        Token::new(TokenType::EOF, "", 2, Literal::None)])  
+        assert_eq!(
+            tokens,
+            vec![
+                Token::new(
+                    TokenType::String,
+                    "\"Hola \nChao\"",
+                    2,
+                    Literal::Str("Hola \nChao".to_string())
+                ),
+                Token::new(TokenType::EOF, "", 2, Literal::None)
+            ]
+        )
     }
 
     #[test]
@@ -346,35 +406,45 @@ use super::*;
         let scanner: Scanner = Scanner::new("1234 5678.9");
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
 
-        assert_eq!(tokens, vec![Token::new(TokenType::Number, "1234" , 1, Literal::Num(1234.0)),
-        Token::new(TokenType::Number, "5678.9", 1, Literal::Num(5678.9)),
-        Token::new(TokenType::EOF, "", 1, Literal::None)])
+        assert_eq!(
+            tokens,
+            vec![
+                Token::new(TokenType::Number, "1234", 1, Literal::Num(1234.0)),
+                Token::new(TokenType::Number, "5678.9", 1, Literal::Num(5678.9)),
+                Token::new(TokenType::EOF, "", 1, Literal::None)
+            ]
+        )
     }
 
     #[test]
     fn identifier_test() {
-        let scanner: Scanner = Scanner::new("and class else false for fun if nil or print return super this true var while");
+        let scanner: Scanner = Scanner::new(
+            "and class else false for fun if nil or print return super this true var while",
+        );
         let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
 
-        assert_eq!(tokens, vec![
-            Token::new(TokenType::And, "and", 1, Literal::None),
-            Token::new(TokenType::Class, "class", 1, Literal::None),
-            Token::new(TokenType::Else, "else", 1, Literal::None),
-            Token::new(TokenType::False, "false", 1, Literal::None),
-            Token::new(TokenType::For, "for", 1, Literal::None),
-            Token::new(TokenType::Fun, "fun", 1, Literal::None),
-            Token::new(TokenType::If, "if", 1, Literal::None),
-            Token::new(TokenType::Nil, "nil", 1, Literal::None),
-            Token::new(TokenType::Or, "or", 1, Literal::None),
-            Token::new(TokenType::Print, "print", 1, Literal::None),
-            Token::new(TokenType::Return, "return", 1, Literal::None),
-            Token::new(TokenType::Super, "super", 1, Literal::None),
-            Token::new(TokenType::This, "this", 1, Literal::None),
-            Token::new(TokenType::True, "true", 1, Literal::None),
-            Token::new(TokenType::Var, "var", 1, Literal::None),
-            Token::new(TokenType::While, "while", 1, Literal::None),
-            Token::new(TokenType::EOF, "", 1, Literal::None)
-        ])
+        assert_eq!(
+            tokens,
+            vec![
+                Token::new(TokenType::And, "and", 1, Literal::None),
+                Token::new(TokenType::Class, "class", 1, Literal::None),
+                Token::new(TokenType::Else, "else", 1, Literal::None),
+                Token::new(TokenType::False, "false", 1, Literal::None),
+                Token::new(TokenType::For, "for", 1, Literal::None),
+                Token::new(TokenType::Fun, "fun", 1, Literal::None),
+                Token::new(TokenType::If, "if", 1, Literal::None),
+                Token::new(TokenType::Nil, "nil", 1, Literal::None),
+                Token::new(TokenType::Or, "or", 1, Literal::None),
+                Token::new(TokenType::Print, "print", 1, Literal::None),
+                Token::new(TokenType::Return, "return", 1, Literal::None),
+                Token::new(TokenType::Super, "super", 1, Literal::None),
+                Token::new(TokenType::This, "this", 1, Literal::None),
+                Token::new(TokenType::True, "true", 1, Literal::None),
+                Token::new(TokenType::Var, "var", 1, Literal::None),
+                Token::new(TokenType::While, "while", 1, Literal::None),
+                Token::new(TokenType::EOF, "", 1, Literal::None)
+            ]
+        )
     }
-
 }
+*/

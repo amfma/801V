@@ -44,7 +44,7 @@ Unary expressions are expressions with only one operand. Negation is the only un
 Binary expressions are expressions with two operands and one operation.
 In both binary and unary expressions the operand themselves can be expressions, ergo parsing is a recursive operation.
  */
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone,)]
 pub enum Expr {
     Binary {
         left_operand: Box<Expr>,
@@ -69,10 +69,10 @@ pub enum Expr {
         right_value: Box<Expr>,
     },
     Variable {
-        name: String,
+        name: Token,
     },
     Assign {
-        name: String,
+        name: Token,
         value: Box<Expr>,
     },
     Call {
@@ -124,11 +124,11 @@ impl Expr {
         }
     }
 
-    pub fn variable(name: String) -> Expr {
+    pub fn variable(name: Token) -> Expr {
         Expr::Variable { name: name }
     }
 
-    pub fn assign(name: String, value: Expr) -> Expr {
+    pub fn assign(name: Token, value: Expr) -> Expr {
         Expr::Assign {
             name,
             value: value.into(),
@@ -174,7 +174,7 @@ pub enum Stmt {
         expr: Expr,
     },
     Var {
-        name: String,
+        name: Token,
         initializar: Option<Expr>,
     },
     Block {
@@ -234,8 +234,8 @@ impl Parser {
         } else if self.match_tokens([TokenType::True]) {
             Ok(Expr::bool(true))
         } else if self.match_tokens([TokenType::Identifier]) {
-            let lexeme: String = self.previous().lexeme.clone();
-            Ok(Expr::variable(lexeme))
+            let token: Token = self.previous().clone();
+            Ok(Expr::variable(token))
         } else {
             Err(Error::ParserError {
                 error_type: ParserError::SyntaxError,
@@ -358,7 +358,7 @@ impl Parser {
             let value = self.assignment()?;
 
             match expr {
-                Expr::Variable { name } => Ok(Expr::assign(name.to_string(), value)),
+                Expr::Variable { name } => Ok(Expr::assign(name, value)),
                 _ => Err(Error::ParserError {
                     error_type: ParserError::SyntaxError,
                 }),
@@ -553,7 +553,7 @@ impl Parser {
 
     fn var_declaration(&mut self) -> Result<Stmt, Error> {
         self.consume(TokenType::Identifier, "Expect variable name.".to_string())?;
-        let name = self.previous().lexeme;
+        let name = self.previous();
 
         let mut initializer = None;
 
