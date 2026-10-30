@@ -66,7 +66,7 @@ pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
     line: usize,
-    literal: Literal,
+    pub literal: Literal,
     pub idx: TokenIndex,
 }
 

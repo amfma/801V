@@ -2,7 +2,7 @@ use std::fmt::Alignment::Right;
 use std::fmt::format;
 
 use crate::error::{self, Error, ParserError};
-use crate::token::{self, Token, TokenType};
+use crate::token::{self, Literal, Token, TokenType};
 
 /*
 Operator enum describes the Lox operations, they roughly corresponds to the following lexemes
@@ -227,8 +227,10 @@ impl Parser {
             let lexeme: String = self.previous().lexeme;
             Ok(Expr::numeric(&lexeme))
         } else if self.match_tokens([TokenType::String]) {
-            let lexeme: String = self.previous().lexeme;
-            Ok(Expr::str(&lexeme))
+            match self.previous().literal {
+                Literal::Str(value) => Ok(Expr::str(&value)),
+                _ => Err(Error::syntax_error())
+            }
         } else if self.match_tokens([TokenType::False]) {
             Ok(Expr::bool(false))
         } else if self.match_tokens([TokenType::True]) {
