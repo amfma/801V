@@ -3,7 +3,8 @@ use crate::interpreter::Value;
 pub enum Error {
     ParserError {error_type: ParserError},
     RuntimeError,
-    Return(Value)
+    Return(Value),
+    UndefinedVariable
 }
 
 pub enum ParserError {

@@ -1,6 +1,7 @@
 use std::fmt::Alignment::Right;
 use std::fmt::format;
 
+use crate::callable::Function;
 use crate::error::{self, Error, ParserError};
 use crate::token::{self, Literal, Token, TokenType};
 
@@ -44,7 +45,7 @@ Unary expressions are expressions with only one operand. Negation is the only un
 Binary expressions are expressions with two operands and one operation.
 In both binary and unary expressions the operand themselves can be expressions, ergo parsing is a recursive operation.
  */
-#[derive(Debug, PartialEq, Clone,)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Binary {
         left_operand: Box<Expr>,
@@ -80,6 +81,18 @@ pub enum Expr {
         paren: Token,
         arguments: Vec<Expr>,
     },
+    Get {
+        expr: Box<Expr>,
+        name: Token,
+    },
+    Set {
+        expr: Box<Expr>,
+        name: Token,
+        value: Box<Expr>,
+    },
+    This {
+        keyword: Token
+    }
 }
 
 impl Expr {
@@ -142,6 +155,27 @@ impl Expr {
             arguments,
         }
     }
+
+    pub fn get(expr: Expr, name: Token) -> Expr {
+        Expr::Get {
+            expr: expr.into(),
+            name,
+        }
+    }
+
+    pub fn set(expr: Expr, name: Token, value: Expr) -> Expr {
+        Expr::Set {
+            expr: expr.into(),
+            name,
+            value: value.into(),
+        }
+    }
+
+    pub fn this(keyword: Token) -> Expr {
+        Expr::This {
+            keyword
+        }
+    }
 }
 
 impl From<&Token> for Operator {
@@ -196,8 +230,12 @@ pub enum Stmt {
     },
     Return {
         keyword: Token,
-        value: Expr
-    }
+        value: Expr,
+    },
+    Class {
+        name: Token,
+        methods: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug)]
@@ -229,7 +267,7 @@ impl Parser {
         } else if self.match_tokens([TokenType::String]) {
             match self.previous().literal {
                 Literal::Str(value) => Ok(Expr::str(&value)),
-                _ => Err(Error::syntax_error())
+                _ => Err(Error::syntax_error()),
             }
         } else if self.match_tokens([TokenType::False]) {
             Ok(Expr::bool(false))
@@ -238,6 +276,8 @@ impl Parser {
         } else if self.match_tokens([TokenType::Identifier]) {
             let token: Token = self.previous().clone();
             Ok(Expr::variable(token))
+        } else if self.match_tokens([TokenType::This]) {
+            Ok(Expr::this(self.previous().clone()))
         } else {
             Err(Error::ParserError {
                 error_type: ParserError::SyntaxError,
@@ -269,6 +309,13 @@ impl Parser {
         loop {
             if self.match_tokens([TokenType::LeftParen]) {
                 expr = self.finish_call(expr)?;
+            } else if self.match_tokens([TokenType::Dot]) {
+                self.consume(
+                    TokenType::Identifier,
+                    "Expect property name after '.'.".into(),
+                )?;
+                let name = self.previous().clone();
+                expr = Expr::get(expr, name)
             } else {
                 break;
             }
@@ -314,7 +361,7 @@ impl Parser {
             let right: Expr = self.comparison()?;
             left = Expr::binary(left, operator, right);
         }
-        Ok(left) 
+        Ok(left)
     }
 
     fn comparison(&mut self) -> Result<Expr, Error> {
@@ -361,6 +408,7 @@ impl Parser {
 
             match expr {
                 Expr::Variable { name } => Ok(Expr::assign(name, value)),
+                Expr::Get { expr, name } => Ok(Expr::set(*expr, name, value)),
                 _ => Err(Error::ParserError {
                     error_type: ParserError::SyntaxError,
                 }),
@@ -532,25 +580,50 @@ impl Parser {
     }
 
     fn return_statement(&mut self) -> Result<Stmt, Error> {
-        let keyword : Token = self.previous().clone();
+        let keyword: Token = self.previous().clone();
         let mut value = Expr::Nil;
         if !self.check_token(TokenType::Semicolon) {
             value = self.expression()?;
         }
 
-        self.consume(TokenType::Semicolon, "Expect ';' after return value.".to_string())?;
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after return value.".to_string(),
+        )?;
         Ok(Stmt::Return { keyword, value })
     }
 
     /* Declarations */
     fn declaration(&mut self) -> Result<Stmt, Error> {
-        if self.match_tokens([TokenType::Fun]) {
+        if self.match_tokens([TokenType::Class]) {
+            self.class_declaration()
+        } else if self.match_tokens([TokenType::Fun]) {
             self.function(String::from("function"))
         } else if self.match_tokens([TokenType::Var]) {
             self.var_declaration()
         } else {
             self.statement()
         }
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt, Error> {
+        self.consume(TokenType::Identifier, "Expect class name.".to_string())?;
+        let name = self.previous().clone();
+
+        self.consume(
+            TokenType::LeftBrace,
+            "Expect '{' before class body.".to_string(),
+        )?;
+        let mut methods = vec![];
+        while !self.check_token(TokenType::RightBrace) && !self.is_at_end() {
+            methods.push(self.function("method".to_string())?);
+        }
+
+        self.consume(
+            TokenType::RightBrace,
+            "Expect '}' after class body.".to_string(),
+        )?;
+        Ok(Stmt::Class { name, methods })
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, Error> {
@@ -577,7 +650,10 @@ impl Parser {
     fn function(&mut self, kind: String) -> Result<Stmt, Error> {
         self.consume(TokenType::Identifier, "Expect {kind} name".to_string())?;
         let name = self.previous().clone();
-        self.consume(TokenType::LeftParen, "Expect '(' after function name.".to_string())?;
+        self.consume(
+            TokenType::LeftParen,
+            "Expect '(' after function name.".to_string(),
+        )?;
 
         let mut parameters: Vec<Token> = vec![];
         if !self.check_token(TokenType::RightParen) {
@@ -599,12 +675,18 @@ impl Parser {
             "Expect ')' after parameters.".to_string(),
         )?;
 
-        self.consume(TokenType::LeftBrace, "Expect { before {kind} body.".to_string())?;
+        self.consume(
+            TokenType::LeftBrace,
+            "Expect { before {kind} body.".to_string(),
+        )?;
 
         let body = self.block()?;
 
-        Ok(Stmt::Function { name, params: parameters, body })
-
+        Ok(Stmt::Function {
+            name,
+            params: parameters,
+            body,
+        })
     }
 
     //Helper methods

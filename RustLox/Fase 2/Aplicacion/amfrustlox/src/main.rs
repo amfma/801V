@@ -24,7 +24,6 @@ fn run_rompt() {
     let mut interpreter: Interpreter = Interpreter::new(Rc::new(RefCell::new(io::stdout())));
 
     loop {
-        let mut resolver = Resolver::new(&mut interpreter) ;
         let mut buffer: String = String::new();
         print!(">>>");
         io::stdout().flush().expect("Console flush error");

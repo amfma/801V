@@ -1,30 +1,39 @@
 use std::{collections::HashMap, hash::Hash};
 
-use crate::{error::Error, interpreter::Interpreter, parser::{Expr, Stmt}, token::Token};
+use crate::{callable::Class, error::Error, interpreter::Interpreter, parser::{Expr, Stmt}, token::Token};
 
 enum State {
     Defined,
     Declared,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum FunctionType {
     None,
     Function,
-    Initializer
+    Initializer,
+    Method
+}
+
+#[derive(Copy, Clone, Debug)]
+enum ClassType {
+    None,
+    Class
 }
 
 pub struct Resolver<'a> {
     interpreter: &'a mut Interpreter,
     scopes: Vec<HashMap<String, State>>,
-    current_function: FunctionType
+    current_function: FunctionType,
+    current_class: ClassType
 }
 
 impl<'a> Resolver<'a> {
     pub fn new(interpreter: &'a mut Interpreter) -> Self {
         Resolver { interpreter, 
             scopes: vec![],
-            current_function: FunctionType::None } 
+            current_function: FunctionType::None,
+            current_class: ClassType::None } 
     }
 
     pub fn resolve(&mut self, statements: &Vec<Stmt>) -> Result<Vec<Stmt>, Error> {
@@ -144,6 +153,30 @@ impl<'a> Resolver<'a> {
                     }
                 }
             },
+            Stmt::Class { name, methods } => {
+                let enclosing_class = self.current_class;
+                self.current_class = ClassType::Class;
+                self.declare(name)?;
+                self.define(name);
+
+                self.begin_scope();
+                self.scopes.last_mut().unwrap().insert("this".to_string(), State::Defined);
+
+                for method in methods {
+                    if let Stmt::Function { name, params, body } = method {
+                        let function_type = if name.lexeme == "init" {
+                            FunctionType::Initializer
+                        } else {
+                            FunctionType::Method
+                        };
+                        self.resolve_function(name, params, body, function_type)?;
+                    } else {
+                        panic!("Unexpected statement in class body")
+                    }
+                }
+                self.end_scope();
+                self.current_class = enclosing_class;
+            },
         }
         Ok(())
     }
@@ -182,6 +215,20 @@ impl<'a> Resolver<'a> {
                 for argument in arguments {
                     self.resolve_expression(argument)?;
                 }
+                Ok(())
+            },
+            Expr::Get { expr, name } => {
+                self.resolve_expression(expr)
+            },
+            Expr::Set { expr, name, value } => {
+                self.resolve_expression(expr)?;
+                self.resolve_expression(value)
+            },
+            Expr::This { keyword } => {
+                if let ClassType::None = self.current_class {
+                    return Err(Error::RuntimeError);
+                }
+                self.resolve_local(keyword);
                 Ok(())
             },
         }

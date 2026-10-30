@@ -9,8 +9,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+
+use crate::callable::Class;
 use crate::{
-    callable::{self, BoxedFunction, Callable, CallableType, Function, Native},
+    callable::{self, BoxedFunction, Callable, CallableType, Function, Native, Instance},
     enviroment::Enviroment,
     error::{
         self,
@@ -36,6 +38,7 @@ pub enum Value {
     String(String),
     Number(f64),
     Callable(Rc<dyn Callable>),
+    Instance(Rc<RefCell<Instance>>)
 }
 
 impl PartialEq for Value {
@@ -63,6 +66,7 @@ impl Hash for Value {
             Value::String(value) => value.hash(state),
             Value::Number(value) => value.to_bits().hash(state),
             Value::Callable(callable) => Rc::as_ptr(callable).hash(state),
+            Value::Instance(ref_cell) => Rc::as_ptr(ref_cell).hash(state),
         }
     }
 }
@@ -84,6 +88,7 @@ impl std::fmt::Display for Value {
             Value::String(value) => write!(f, "{value}"),
             Value::Number(value) => write!(f, "{value}"),
             Value::Callable(value) => write!(f, "{:?}", value),
+            Value::Instance(ref_cell) => write!(f, "{}", RefCell::borrow(ref_cell)),
         }
     }
 }
@@ -172,6 +177,27 @@ impl Interpreter {
                 let value = self.evaluate_expression(value)?;
                 return Err(Error::Return(value));
             }
+            Stmt::Class { name, methods } => {
+                self.enviroment.borrow_mut().define(name.lexeme.clone(), Value::Nil);
+                let closure = Rc::new(RefCell::new(Enviroment::new(Some(Rc::clone(&self.enviroment)))));
+                let mut final_methods = HashMap::new();
+                for method in methods {
+                    if let Stmt::Function { name, params, body } = method {
+                        final_methods.insert(
+                            name.lexeme.clone(), 
+                        Rc::new(Function::new(Rc::clone(&closure), name, params, body)));
+                    } else {
+                        panic!("Unexpected statement in class body")
+                    }
+                }
+
+                let class = Class::new(name.lexeme.clone(), final_methods);
+
+                if self.enviroment.borrow_mut().assign(name.lexeme.clone(), Value::Callable(class)).is_err() {
+                    return Err(Error::RuntimeError);
+                }
+                
+            },
         }
 
         Ok(())
@@ -341,6 +367,31 @@ impl Interpreter {
                     _ => Err(Error::RuntimeError),
                 }
             }
+            Expr::Get { expr, name } => {
+                if let Value::Instance(instance) = self.evaluate_expression(expr)? {
+                    match Instance::get(&instance, name.lexeme.clone()) {
+                        Some(value) => Ok(value),
+                        None => Err(Error::RuntimeError)
+                    }
+                } else {
+                    Err(Error::RuntimeError)
+                }
+            },
+            Expr::Set { expr, name, value } => {
+                match self.evaluate_expression(expr)? {
+                    Value::Instance(instance) => {
+                        let value = self.evaluate_expression(value)?;
+                        Ok(instance.borrow_mut().set(name.lexeme.clone(), value))
+                    }
+                    _ => Err(Error::RuntimeError),
+                }
+            },
+            Expr::This { keyword } => {
+                match self.lookup_variable(keyword) {
+                    Some(value) => Ok(value),
+                    None => Err(Error::RuntimeError)
+                }
+            },
         }
     }
 

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::interpreter::Value;
+use crate::{error::Error, interpreter::Value};
 
 #[derive(Debug, Clone)]
 pub struct Enviroment {
@@ -46,14 +46,15 @@ impl Enviroment {
         }
     }
 
-    pub fn assign(&mut self, key: String, value: Value) {
+    pub fn assign(&mut self, key: String, value: Value) -> Result<(), Error> {
         if self.values.contains_key(&key) {
             self.values.insert(key, value);
-            return;
+            Ok(())
         } else if let Some(enclosing) = &self.enclosing {
             enclosing.as_ref().borrow_mut().assign(key, value)
         } else {
-            println!("Undefined variable at assign {}.", key)
+            println!("Undefined variable at assign {}.", key);
+            Err(Error::UndefinedVariable)
         }
     }
 
