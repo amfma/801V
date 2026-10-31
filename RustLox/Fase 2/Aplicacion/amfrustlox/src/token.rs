@@ -183,7 +183,7 @@ impl Scanner {
             }
             '/' => {
                 if self.match_char('/') {
-                    while self.peek() != '\n' && self.is_at_end() {
+                    while self.peek() != '\n' && !self.is_at_end() {
                         self.advance();
                     }
                 } else {

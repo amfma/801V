@@ -326,7 +326,7 @@ impl Parser {
 
     fn finish_call(&mut self, callee: Expr) -> Result<Expr, Error> {
         let mut arguments = vec![];
-        if !self.check_token(TokenType::RightParen) {
+        if !self.check(TokenType::RightParen) {
             loop {
                 if arguments.len() >= 255 {
                     return Err(Error::RuntimeError);
@@ -477,7 +477,7 @@ impl Parser {
     fn block(&mut self) -> Result<Vec<Stmt>, Error> {
         let mut statements: Vec<Stmt> = vec![];
 
-        while !self.check_special(TokenType::RightBrace) && !self.is_at_end() {
+        while !self.check(TokenType::RightBrace) && !self.is_at_end() {
             statements.push(self.declaration()?);
         }
 
@@ -539,7 +539,7 @@ impl Parser {
             Some(self.expression_statement()?)
         };
 
-        let condition = if !self.check_special(TokenType::Semicolon) {
+        let condition = if !self.check(TokenType::Semicolon) {
             self.expression()?
         } else {
             Expr::Nil
@@ -549,7 +549,7 @@ impl Parser {
             "Expect ';' after loop condition.".to_string(),
         )?;
 
-        let increment = if !self.check_special(TokenType::RightParen) {
+        let increment = if !self.check(TokenType::RightParen) {
             Some(self.expression()?)
         } else {
             None
@@ -582,7 +582,7 @@ impl Parser {
     fn return_statement(&mut self) -> Result<Stmt, Error> {
         let keyword: Token = self.previous().clone();
         let mut value = Expr::Nil;
-        if !self.check_token(TokenType::Semicolon) {
+        if !self.check(TokenType::Semicolon) {
             value = self.expression()?;
         }
 
@@ -615,7 +615,7 @@ impl Parser {
             "Expect '{' before class body.".to_string(),
         )?;
         let mut methods = vec![];
-        while !self.check_token(TokenType::RightBrace) && !self.is_at_end() {
+        while !self.check(TokenType::RightBrace) && !self.is_at_end() {
             methods.push(self.function("method".to_string())?);
         }
 
@@ -656,7 +656,7 @@ impl Parser {
         )?;
 
         let mut parameters: Vec<Token> = vec![];
-        if !self.check_token(TokenType::RightParen) {
+        if !self.check(TokenType::RightParen) {
             loop {
                 if parameters.len() > 255 {
                     return Err(Error::RuntimeError);
@@ -716,7 +716,7 @@ impl Parser {
         }
     }
 
-    fn check_special(&mut self, token_type: TokenType) -> bool {
+    fn check(&mut self, token_type: TokenType) -> bool {
         if !self.is_at_end() && self.tokens[self.current].token_type == token_type {
             true
         } else {

@@ -47,26 +47,12 @@ impl PartialEq for Value {
             (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
             (Self::String(l0), Self::String(r0)) => l0 == r0,
             (Self::Number(l0), Self::Number(r0)) => l0 == r0,
-            (Self::Callable(l0), Self::Callable(r0)) => ptr::eq(l0, r0),
+            (Self::Callable(l0), Self::Callable(r0)) => Rc::ptr_eq(l0, r0),
+            (Self::Instance(l0), Self::Instance(r0)) => Rc::ptr_eq(l0, r0),
             (Value::Nil, Value::Nil) => true,
             (Value::Nil, _) => false,
             (_, Value::Nil) => false,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
-        }
-    }
-}
-
-impl Eq for Value {}
-
-impl Hash for Value {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            Value::Nil => 0.hash(state),
-            Value::Boolean(value) => value.hash(state),
-            Value::String(value) => value.hash(state),
-            Value::Number(value) => value.to_bits().hash(state),
-            Value::Callable(callable) => Rc::as_ptr(callable).hash(state),
-            Value::Instance(ref_cell) => Rc::as_ptr(ref_cell).hash(state),
         }
     }
 }
@@ -185,7 +171,7 @@ impl Interpreter {
                     if let Stmt::Function { name, params, body } = method {
                         final_methods.insert(
                             name.lexeme.clone(), 
-                        Rc::new(Function::new(Rc::clone(&closure), name, params, body)));
+                        Rc::new(Function::new(Rc::clone(&self.enviroment), name, params, body)));
                     } else {
                         panic!("Unexpected statement in class body")
                     }
