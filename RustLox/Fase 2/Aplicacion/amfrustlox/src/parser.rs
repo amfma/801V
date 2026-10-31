@@ -1,5 +1,6 @@
 use std::fmt::Alignment::Right;
 use std::fmt::format;
+use std::rc::Rc;
 
 use crate::callable::Function;
 use crate::error::{self, Error, ParserError};
@@ -92,6 +93,10 @@ pub enum Expr {
     },
     This {
         keyword: Token
+    },
+    Super {
+        keyword: Token,
+        method: Token
     }
 }
 
@@ -176,6 +181,10 @@ impl Expr {
             keyword
         }
     }
+
+    pub fn superkw(keyword: Token, method: Token) -> Expr {
+        Expr::Super { keyword, method }
+    }
 }
 
 impl From<&Token> for Operator {
@@ -235,6 +244,7 @@ pub enum Stmt {
     Class {
         name: Token,
         methods: Vec<Stmt>,
+        superclass: Rc<Expr>
     },
 }
 
@@ -278,6 +288,12 @@ impl Parser {
             Ok(Expr::variable(token))
         } else if self.match_tokens([TokenType::This]) {
             Ok(Expr::this(self.previous().clone()))
+        } else if self.match_tokens([TokenType::Super]) {
+            let keyword = self.previous().clone();
+            self.consume(TokenType::Dot, "Expect '.' after 'super'.".to_string())?;
+            self.consume(TokenType::Identifier, "Expect superclass method name.".to_string())?;
+            let method = self.previous().clone();
+            Ok(Expr::superkw(keyword, method))
         } else {
             Err(Error::ParserError {
                 error_type: ParserError::SyntaxError,
@@ -610,6 +626,12 @@ impl Parser {
         self.consume(TokenType::Identifier, "Expect class name.".to_string())?;
         let name = self.previous().clone();
 
+        let mut superclass = Expr::nil();
+        if self.match_tokens([TokenType::Less]) {
+            self.consume(TokenType::Identifier, "Expect superclass name.".to_string())?;
+            superclass = Expr::variable(self.previous().clone());
+        }
+
         self.consume(
             TokenType::LeftBrace,
             "Expect '{' before class body.".to_string(),
@@ -623,7 +645,7 @@ impl Parser {
             TokenType::RightBrace,
             "Expect '}' after class body.".to_string(),
         )?;
-        Ok(Stmt::Class { name, methods })
+        Ok(Stmt::Class { name, methods, superclass: Rc::new(superclass) })
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, Error> {

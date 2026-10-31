@@ -9,10 +9,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-
-use crate::callable::Class;
+use crate::callable::{Class, Method};
 use crate::{
-    callable::{self, BoxedFunction, Callable, CallableType, Function, Native, Instance},
+    callable::{self, BoxedFunction, Callable, CallableType, Function, Instance, Native},
     enviroment::Enviroment,
     error::{
         self,
@@ -38,7 +37,7 @@ pub enum Value {
     String(String),
     Number(f64),
     Callable(Rc<dyn Callable>),
-    Instance(Rc<RefCell<Instance>>)
+    Instance(Rc<RefCell<Instance>>),
 }
 
 impl PartialEq for Value {
@@ -163,27 +162,55 @@ impl Interpreter {
                 let value = self.evaluate_expression(value)?;
                 return Err(Error::Return(value));
             }
-            Stmt::Class { name, methods } => {
-                self.enviroment.borrow_mut().define(name.lexeme.clone(), Value::Nil);
-                let closure = Rc::new(RefCell::new(Enviroment::new(Some(Rc::clone(&self.enviroment)))));
+            Stmt::Class {
+                name,
+                methods,
+                superclass,
+            } => {
+                self.enviroment
+                    .borrow_mut()
+                    .define(name.lexeme.clone(), Value::Nil);
+                let closure = Rc::new(RefCell::new(Enviroment::new(Some(Rc::clone(
+                    &self.enviroment,
+                )))));
+                let superclass = match self.evaluate_expression(superclass)? {
+                    Value::Nil => None,
+                    Value::Callable(callable) if callable.ctype() == CallableType::Class => {
+                        closure
+                            .borrow_mut()
+                            .define(String::from("super"), Value::Callable(Rc::clone(&callable)));
+                        callable.as_class()
+                    }
+                    _ => return Err(Error::RuntimeError),
+                };
                 let mut final_methods = HashMap::new();
                 for method in methods {
                     if let Stmt::Function { name, params, body } = method {
                         final_methods.insert(
-                            name.lexeme.clone(), 
-                        Rc::new(Function::new(Rc::clone(&self.enviroment), name, params, body)));
+                            name.lexeme.clone(),
+                            Rc::new(Function::new(
+                                Rc::clone(&self.enviroment),
+                                name,
+                                params,
+                                body,
+                            )),
+                        );
                     } else {
                         panic!("Unexpected statement in class body")
                     }
                 }
 
-                let class = Class::new(name.lexeme.clone(), final_methods);
+                let class = Class::new(name.lexeme.clone(), final_methods, superclass);
 
-                if self.enviroment.borrow_mut().assign(name.lexeme.clone(), Value::Callable(class)).is_err() {
+                if self
+                    .enviroment
+                    .borrow_mut()
+                    .assign(name.lexeme.clone(), Value::Callable(class))
+                    .is_err()
+                {
                     return Err(Error::RuntimeError);
                 }
-                
-            },
+            }
         }
 
         Ok(())
@@ -327,7 +354,7 @@ impl Interpreter {
                     None => {
                         self.globals
                             .borrow_mut()
-                            .assign(name.lexeme.clone(), value.clone());
+                            .assign(name.lexeme.clone(), value.clone())?;
                     }
                 }
                 Ok(value)
@@ -357,27 +384,58 @@ impl Interpreter {
                 if let Value::Instance(instance) = self.evaluate_expression(expr)? {
                     match Instance::get(&instance, name.lexeme.clone()) {
                         Some(value) => Ok(value),
-                        None => Err(Error::RuntimeError)
+                        None => Err(Error::RuntimeError),
                     }
                 } else {
                     Err(Error::RuntimeError)
                 }
+            }
+            Expr::Set { expr, name, value } => match self.evaluate_expression(expr)? {
+                Value::Instance(instance) => {
+                    let value = self.evaluate_expression(value)?;
+                    Ok(instance.borrow_mut().set(name.lexeme.clone(), value))
+                }
+                _ => Err(Error::RuntimeError),
             },
-            Expr::Set { expr, name, value } => {
-                match self.evaluate_expression(expr)? {
-                    Value::Instance(instance) => {
-                        let value = self.evaluate_expression(value)?;
-                        Ok(instance.borrow_mut().set(name.lexeme.clone(), value))
+            Expr::This { keyword } => match self.lookup_variable(keyword) {
+                Some(value) => Ok(value),
+                None => Err(Error::RuntimeError),
+            },
+            Expr::Super { keyword, method } => {
+                let distance = self.locals.get(&keyword.idx).unwrap();
+                let superclass = self
+                    .enviroment
+                    .borrow()
+                    .get_at(*distance, "super".to_string())
+                    .unwrap();
+                let this = self
+                    .enviroment
+                    .borrow()
+                    .get_at(*distance - 1, "this".to_string())
+                    .unwrap();
+
+                match (superclass, this) {
+                    (Value::Callable(callable), Value::Instance(instance)) => {
+                        let supe = callable.as_class().unwrap();
+                        let fun = match supe.find_method(method.lexeme.clone()) {
+                            Some(method) => method,
+                            _ => {
+                                return Err(Error::RuntimeError);
+                            }
+                        };
+
+                        Ok(Value::Callable(Rc::new(Method::bind(
+                            fun,
+                            instance,
+                            method.lexeme == "init",
+                        ))))
                     }
-                    _ => Err(Error::RuntimeError),
+                    (supe, this) => panic!(
+                        "Unexpected literal types for super({:?}) and this({:?})",
+                        supe, this
+                    ),
                 }
-            },
-            Expr::This { keyword } => {
-                match self.lookup_variable(keyword) {
-                    Some(value) => Ok(value),
-                    None => Err(Error::RuntimeError)
-                }
-            },
+            }
         }
     }
 

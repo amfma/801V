@@ -32,6 +32,8 @@ pub trait Callable {
     fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &Vec<Value>) -> Result<Value, Error>;
 
     fn name(&self) -> String;
+
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>>;
 }
 
 impl Debug for dyn Callable {
@@ -64,6 +66,10 @@ impl Callable for Function {
     
     fn ctype(&self) -> CallableType {
         CallableType::Function
+    }
+    
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        None
     }
 }
 
@@ -102,12 +108,17 @@ impl Callable for Native {
     fn name(&self) -> String {
         String::from(&self.name)
     }
+
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        None
+    }
 }
 
 #[derive(Debug)]
 pub struct Class {
     name: String,
-    methods: HashMap<String, Rc<Function>>
+    methods: HashMap<String, Rc<Function>>,
+    superclass: Option<Rc<Class>>
 }
 
 impl Callable for Class {
@@ -133,19 +144,26 @@ impl Callable for Class {
     fn name(&self) -> String {
         self.name.clone()
     }
+    
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        Some(self)
+    }
 }
 
 impl Class {
-    pub fn new(name: String, methods: HashMap<String, Rc<Function>>) -> Rc<Self> {
+    pub fn new(name: String, methods: HashMap<String, Rc<Function>>, superclass:Option<Rc<Class>>) -> Rc<Self> {
         Rc::new(Class {
             name: name,
-            methods
+            methods,
+            superclass
         })
     }
 
     pub fn find_method(&self, name:String) -> Option<Rc<Function>> {
         if let Some(function) = self.methods.get(&name) {
             Some(Rc::clone(function))
+        } else if let Some(superclass) = &self.superclass {
+            superclass.find_method(name)
         } else {
             None
         }
@@ -209,6 +227,10 @@ impl Callable for Method {
 
     fn name(&self) -> String {
         self.function.name()
+    }
+    
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        None
     }
 }
 
