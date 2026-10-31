@@ -181,22 +181,19 @@ impl<'a> Resolver<'a> {
                 self.declare(name)?;
                 self.define(name);
 
-                if let Expr::Variable {
-                    name: superclass_name,
-                } = &**superclass
-                {
-                    if name == superclass_name {
-                        return Err(Error::RuntimeError);
+                if let Some(superclass_expr) = superclass {
+                    if let Expr::Variable { name:superclass_name } = superclass_expr {
+                        if name.lexeme == superclass_name.lexeme {
+                            return Err(Error::RuntimeError)
+                        }
                     }
                     self.current_class = ClassType::Subclass;
-                    self.resolve_expression(&Expr::variable(name.clone()))?;
+                    self.resolve_expression(superclass_expr)?;
 
                     self.begin_scope();
-                    self.scopes
-                        .last_mut()
-                        .unwrap()
-                        .insert("super".to_string(), State::Defined);
+                    self.scopes.last_mut().unwrap().insert("super".to_string(), State::Defined);
                 }
+
                 self.begin_scope();
                 self.scopes
                     .last_mut()
@@ -216,7 +213,8 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 self.end_scope();
-                if let Expr::Variable { .. } = &**superclass {
+
+                if superclass.is_some() {
                     self.end_scope();
                 }
                 self.current_class = enclosing_class;

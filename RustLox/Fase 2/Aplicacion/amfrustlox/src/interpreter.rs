@@ -173,27 +173,31 @@ impl Interpreter {
                 let closure = Rc::new(RefCell::new(Enviroment::new(Some(Rc::clone(
                     &self.enviroment,
                 )))));
-                let superclass = match self.evaluate_expression(superclass)? {
-                    Value::Nil => None,
-                    Value::Callable(callable) if callable.ctype() == CallableType::Class => {
-                        closure
-                            .borrow_mut()
-                            .define(String::from("super"), Value::Callable(Rc::clone(&callable)));
-                        callable.as_class()
-                    }
-                    _ => return Err(Error::RuntimeError),
+
+                let superclass = match superclass {
+                    None => None,
+                    Some(expr) => match self.evaluate_expression(expr)? {
+                        Value::Callable(callable) if callable.ctype() == CallableType::Class => {
+                            closure.borrow_mut().define(
+                                String::from("super"),
+                                Value::Callable(Rc::clone(&callable)),
+                            );
+                            callable.as_class()
+                        }
+                        _ => return Err(Error::RuntimeError),
+                    },
+                };
+                let method_env = if superclass.is_some() {
+                    Rc::clone(&closure)
+                } else {
+                    Rc::clone(&self.enviroment)
                 };
                 let mut final_methods = HashMap::new();
                 for method in methods {
                     if let Stmt::Function { name, params, body } = method {
                         final_methods.insert(
                             name.lexeme.clone(),
-                            Rc::new(Function::new(
-                                Rc::clone(&self.enviroment),
-                                name,
-                                params,
-                                body,
-                            )),
+                            Rc::new(Function::new(Rc::clone(&method_env), name, params, body)),
                         );
                     } else {
                         panic!("Unexpected statement in class body")

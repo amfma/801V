@@ -244,7 +244,7 @@ pub enum Stmt {
     Class {
         name: Token,
         methods: Vec<Stmt>,
-        superclass: Rc<Expr>
+        superclass: Option<Expr>
     },
 }
 
@@ -626,11 +626,12 @@ impl Parser {
         self.consume(TokenType::Identifier, "Expect class name.".to_string())?;
         let name = self.previous().clone();
 
-        let mut superclass = Expr::nil();
-        if self.match_tokens([TokenType::Less]) {
+        let superclass = if self.match_tokens([TokenType::Less]) {
             self.consume(TokenType::Identifier, "Expect superclass name.".to_string())?;
-            superclass = Expr::variable(self.previous().clone());
-        }
+            Some(Expr::variable(self.previous().clone()))
+        } else {
+            None
+        };
 
         self.consume(
             TokenType::LeftBrace,
@@ -645,7 +646,7 @@ impl Parser {
             TokenType::RightBrace,
             "Expect '}' after class body.".to_string(),
         )?;
-        Ok(Stmt::Class { name, methods, superclass: Rc::new(superclass) })
+        Ok(Stmt::Class { name, methods, superclass: superclass })
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, Error> {
