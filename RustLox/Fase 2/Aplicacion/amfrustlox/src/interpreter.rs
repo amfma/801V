@@ -463,3 +463,6 @@ impl Interpreter {
         }
     }
 }
+
+   #[cfg(test)]
+   mod tests;

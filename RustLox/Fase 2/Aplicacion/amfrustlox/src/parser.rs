@@ -780,3 +780,6 @@ impl Parser {
 pub struct ast {
     pub start: Vec<Expr>,
 }
+
+   #[cfg(test)]
+   mod tests;

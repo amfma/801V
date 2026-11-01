@@ -291,3 +291,6 @@ impl<'a> Resolver<'a> {
         }
     }
 }
+
+   #[cfg(test)]
+   mod tests;

@@ -313,3 +313,5 @@ impl Scanner {
     }
 }
 
+   #[cfg(test)]
+   mod tests;

@@ -270,3 +270,6 @@ fn execute(
         Err(err) => Err(err),
     }
 }
+
+   #[cfg(test)]
+   mod tests;
