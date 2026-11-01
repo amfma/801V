@@ -31,6 +31,8 @@ fn runtime_error_exits_with_70() {
     let out = bin().arg(lox("error_runtime_division.lox")).output().unwrap();
     assert_eq!(out.status.code(), Some(70));
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "before\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(stderr, "[line 2] Runtime error: Division by zero.\n");
 }
 
 #[test]
@@ -96,6 +98,7 @@ fn repl_survives_errors() {
     let mut child = bin()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     child
@@ -107,8 +110,10 @@ fn repl_survives_errors() {
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Runtime error."));
+    let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stdout.contains('5'));
+    assert!(!stdout.contains("Division"), "diagnostics must not reach stdout");
+    assert_eq!(stderr, "[line 1] Runtime error: Division by zero.\n");
 }
 
 #[test]
@@ -131,6 +136,5 @@ fn repl_reports_syntax_errors_on_stderr() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("Expect ';' after value."), "stderr was: {stderr:?}");
     assert!(!stdout.contains("Expect ';'"), "diagnostics must not reach stdout");
-    assert!(stdout.contains("Parse error."));
     assert!(stdout.contains('2'));
 }

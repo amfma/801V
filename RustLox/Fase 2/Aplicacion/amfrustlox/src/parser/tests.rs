@@ -1093,3 +1093,41 @@ fn more_than_255_parameters_are_rejected_with_a_message() {
     let d = syntax_error(&function_with_params(256));
     assert_eq!(d.message, "Can't have more than 255 parameters.");
 }
+
+/* =====================================================================
+   Operator line numbers (used by runtime error messages)
+   ===================================================================== */
+
+#[test]
+fn binary_expressions_record_the_operator_line() {
+    match parse_expr("1\n+\n2") {
+        Expr::Binary { line, .. } => assert_eq!(line.0, 2),
+        other => panic!("expected binary, got {other:?}"),
+    }
+}
+
+#[test]
+fn unary_expressions_record_the_operator_line() {
+    match parse_expr("\n\n-1") {
+        Expr::Unary { line, .. } => assert_eq!(line.0, 3),
+        other => panic!("expected unary, got {other:?}"),
+    }
+}
+
+#[test]
+fn logical_expressions_record_the_operator_line() {
+    match parse_expr("true\nor false") {
+        Expr::Binary { line, operator, .. } => {
+            assert_eq!(operator, Operator::Or);
+            assert_eq!(line.0, 2);
+        }
+        other => panic!("expected binary, got {other:?}"),
+    }
+}
+
+#[test]
+fn line_numbers_do_not_affect_ast_equality() {
+    assert_eq!(parse_expr("1\n+\n2"), parse_expr("1 + 2"));
+    assert_eq!(parse_expr("1 + 2"), Expr::binary(num("1"), Operator::Add, num("2")));
+    assert_eq!(parse_expr("\n-1"), Expr::unary(Operator::Subtract, num("1")));
+}

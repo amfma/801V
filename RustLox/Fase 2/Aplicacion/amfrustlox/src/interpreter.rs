@@ -1,27 +1,20 @@
-use std::hash::Hash;
-use std::ptr;
 use std::{
-    cell::{Ref, RefCell},
+    cell::RefCell,
     collections::HashMap,
-    fmt::{Alignment::Right, format, write},
     io::Write,
     rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::callable::{Class, Method};
 use crate::{
-    callable::{self, BoxedFunction, Callable, CallableType, Function, Instance, Native},
+    callable::{BoxedFunction, Callable, CallableType, Class, Function, Instance, Method, Native},
     enviroment::Enviroment,
-    error::{
-        self,
-        Error::{self, RuntimeError},
-    },
-    parser::{self, Expr, Operator, Stmt},
+    error::Error,
+    parser::{Expr, Operator, Stmt},
     token::{Token, TokenIndex},
 };
 
-type Output = Result<Value, error::Error>;
+type Output = Result<Value, Error>;
 
 pub struct Interpreter {
     enviroment: Rc<RefCell<Enviroment>>,
@@ -79,11 +72,17 @@ impl std::fmt::Display for Value {
     }
 }
 
+fn undefined_variable(name: &Token) -> Error {
+    Error::runtime(name, format!("Undefined variable '{}'.", name.lexeme))
+}
+
 impl Interpreter {
+    /// Diagnostics go to the process stderr.
     pub fn new(stdout: Rc<RefCell<dyn Write>>) -> Self {
         Self::with_streams(stdout, Rc::new(RefCell::new(std::io::stderr())))
     }
 
+    /// Both output streams injected (used by tests and tooling).
     pub fn with_streams(stdout: Rc<RefCell<dyn Write>>, stderr: Rc<RefCell<dyn Write>>) -> Self {
         let globals = Rc::new(RefCell::new(Enviroment::new(None)));
 
@@ -142,18 +141,11 @@ impl Interpreter {
                     self.execute_statement(alternative)?;
                 }
             }
-            Stmt::While { contion, body } => loop {
-                match self.evaluate_expression(contion) {
-                    Ok(expression) => {
-                        if expression.is_truthy() {
-                            self.execute_statement(body)?;
-                        } else {
-                            return Ok(());
-                        }
-                    }
-                    Err(_) => return Err(Error::RuntimeError),
+            Stmt::While { contion, body } => {
+                while self.evaluate_expression(contion)?.is_truthy() {
+                    self.execute_statement(body)?;
                 }
-            },
+            }
             Stmt::Function { name, params, body } => {
                 let boxed_function =
                     Rc::new(Function::new(self.enviroment.clone(), name, params, body));
@@ -162,14 +154,14 @@ impl Interpreter {
                     .borrow_mut()
                     .define(name.lexeme.clone(), callable);
             }
-            Stmt::Return { keyword, value } => {
+            Stmt::Return { keyword: _, value } => {
                 let value = self.evaluate_expression(value)?;
                 return Err(Error::Return(value));
             }
             Stmt::Class {
                 name,
                 methods,
-                superclass,
+                superclass: superclass_expr,
             } => {
                 self.enviroment
                     .borrow_mut()
@@ -178,18 +170,28 @@ impl Interpreter {
                     &self.enviroment,
                 )))));
 
-                let superclass = match superclass {
+                let superclass = match superclass_expr {
                     None => None,
-                    Some(expr) => match self.evaluate_expression(expr)? {
-                        Value::Callable(callable) if callable.ctype() == CallableType::Class => {
-                            closure.borrow_mut().define(
-                                String::from("super"),
-                                Value::Callable(Rc::clone(&callable)),
-                            );
-                            callable.as_class()
+                    Some(expr) => {
+                        let token = match expr {
+                            Expr::Variable { name: super_name } => super_name,
+                            _ => name,
+                        };
+                        match self.evaluate_expression(expr)? {
+                            Value::Callable(callable)
+                                if callable.ctype() == CallableType::Class =>
+                            {
+                                closure.borrow_mut().define(
+                                    String::from("super"),
+                                    Value::Callable(Rc::clone(&callable)),
+                                );
+                                callable.as_class()
+                            }
+                            _ => {
+                                return Err(Error::runtime(token, "Superclass must be a class."));
+                            }
                         }
-                        _ => return Err(Error::RuntimeError),
-                    },
+                    }
                 };
                 let method_env = if superclass.is_some() {
                     Rc::clone(&closure)
@@ -216,7 +218,7 @@ impl Interpreter {
                     .assign(name.lexeme.clone(), Value::Callable(class))
                     .is_err()
                 {
-                    return Err(Error::RuntimeError);
+                    return Err(undefined_variable(name));
                 }
             }
         }
@@ -258,9 +260,11 @@ impl Interpreter {
                 left_operand,
                 operator,
                 right_operand,
+                line,
             } => {
-                let left = self.evaluate_expression(&left_operand)?;
+                let left = self.evaluate_expression(left_operand)?;
 
+                // Short-circuit: only evaluate the right side when it can matter.
                 match operator {
                     Operator::Or => {
                         return if left.is_truthy() {
@@ -279,7 +283,7 @@ impl Interpreter {
                     _ => {}
                 }
 
-                let right = self.evaluate_expression(&right_operand)?;
+                let right = self.evaluate_expression(right_operand)?;
 
                 match (&left, operator, &right) {
                     (Value::Number(left), Operator::Add, Value::Number(right)) => {
@@ -293,9 +297,9 @@ impl Interpreter {
                     }
                     (Value::Number(left), Operator::Divide, Value::Number(right)) => {
                         if *right == 0.0 {
-                            return Err(Error::RuntimeError);
+                            Err(Error::runtime_at(line.0, "Division by zero."))
                         } else {
-                            return Ok(Value::Number(left / right));
+                            Ok(Value::Number(left / right))
                         }
                     }
                     (Value::String(left), Operator::Add, Value::String(right)) => {
@@ -330,29 +334,52 @@ impl Interpreter {
                     /* Type agnostic comparisions */
                     (_, Operator::Equal, _) => Ok(Value::Boolean(left == right)),
                     (_, Operator::Inequal, _) => Ok(Value::Boolean(left != right)),
-                    _ => return Err(Error::RuntimeError),
+                    /* Everything else is a type error */
+                    (_, Operator::Add, _) => Err(Error::runtime_at(
+                        line.0,
+                        "Operands must be two numbers or two strings.",
+                    )),
+                    (
+                        _,
+                        Operator::Less
+                        | Operator::LessEqual
+                        | Operator::Greater
+                        | Operator::GreaterEqual,
+                        _,
+                    ) => Err(Error::runtime_at(
+                        line.0,
+                        "Operands must be two numbers or two strings.",
+                    )),
+                    (_, Operator::Subtract | Operator::Multiply | Operator::Divide, _) => {
+                        Err(Error::runtime_at(line.0, "Operands must be numbers."))
+                    }
+                    _ => Err(Error::runtime_at(line.0, "Invalid binary operator.")),
                 }
             }
             Expr::Numeric { value } => Ok(Value::Number(value.parse().unwrap())),
             Expr::String { value } => Ok(Value::String(value.clone())),
-            Expr::Grouping { expr } => Ok(self.evaluate_expression(&expr)?),
+            Expr::Grouping { expr } => Ok(self.evaluate_expression(expr)?),
             Expr::Nil => Ok(Value::Nil),
             Expr::Bool { value } => Ok(Value::Boolean(*value)),
             Expr::Unary {
                 operator,
                 right_value,
+                line,
             } => {
-                let right = self.evaluate_expression(&right_value)?;
+                let right = self.evaluate_expression(right_value)?;
 
                 match (operator, &right) {
                     (Operator::Subtract, Value::Number(right)) => Ok(Value::Number(-right)),
+                    (Operator::Subtract, _) => {
+                        Err(Error::runtime_at(line.0, "Operand must be a number."))
+                    }
                     (Operator::Negation, right) => Ok(Value::Boolean(!right.is_truthy())),
-                    _ => return Err(Error::RuntimeError),
+                    _ => Err(Error::runtime_at(line.0, "Invalid unary operator.")),
                 }
             }
             Expr::Variable { name } => match self.lookup_variable(name) {
                 Some(value) => Ok(value),
-                None => Err(Error::RuntimeError),
+                None => Err(undefined_variable(name)),
             },
             Expr::Assign { name, value } => {
                 let value = self.evaluate_expression(value)?;
@@ -367,7 +394,8 @@ impl Interpreter {
                     None => {
                         self.globals
                             .borrow_mut()
-                            .assign(name.lexeme.clone(), value.clone())?;
+                            .assign(name.lexeme.clone(), value.clone())
+                            .map_err(|_| undefined_variable(name))?;
                     }
                 }
                 Ok(value)
@@ -385,46 +413,64 @@ impl Interpreter {
                 match callee {
                     Value::Callable(function) => {
                         if function.arity() != evaluated_arguments.len() {
-                            Err(Error::RuntimeError)
+                            Err(Error::runtime(
+                                paren,
+                                format!(
+                                    "Expected {} arguments but got {}.",
+                                    function.arity(),
+                                    evaluated_arguments.len()
+                                ),
+                            ))
                         } else {
-                            function.call(self, &evaluated_arguments)
+                            function
+                                .call(self, &evaluated_arguments)
+                                .map_err(|error| match error {
+                                    // Natives have no position of their own: use the call site.
+                                    Error::RuntimeError => {
+                                        Error::runtime(paren, "Native function failed.")
+                                    }
+                                    other => other,
+                                })
                         }
                     }
-                    _ => Err(Error::RuntimeError),
+                    _ => Err(Error::runtime(
+                        paren,
+                        "Can only call functions and classes.",
+                    )),
                 }
             }
-            Expr::Get { expr, name } => {
-                if let Value::Instance(instance) = self.evaluate_expression(expr)? {
-                    match Instance::get(&instance, name.lexeme.clone()) {
-                        Some(value) => Ok(value),
-                        None => Err(Error::RuntimeError),
-                    }
-                } else {
-                    Err(Error::RuntimeError)
-                }
-            }
+            Expr::Get { expr, name } => match self.evaluate_expression(expr)? {
+                Value::Instance(instance) => match Instance::get(&instance, name.lexeme.clone()) {
+                    Some(value) => Ok(value),
+                    None => Err(Error::runtime(
+                        name,
+                        format!("Undefined property '{}'.", name.lexeme),
+                    )),
+                },
+                _ => Err(Error::runtime(name, "Only instances have properties.")),
+            },
             Expr::Set { expr, name, value } => match self.evaluate_expression(expr)? {
                 Value::Instance(instance) => {
                     let value = self.evaluate_expression(value)?;
                     Ok(instance.borrow_mut().set(name.lexeme.clone(), value))
                 }
-                _ => Err(Error::RuntimeError),
+                _ => Err(Error::runtime(name, "Only instances have fields.")),
             },
             Expr::This { keyword } => match self.lookup_variable(keyword) {
                 Some(value) => Ok(value),
-                None => Err(Error::RuntimeError),
+                None => Err(undefined_variable(keyword)),
             },
             Expr::Super { keyword, method } => {
-                let distance = self.locals.get(&keyword.idx).unwrap();
+                let distance = *self.locals.get(&keyword.idx).unwrap();
                 let superclass = self
                     .enviroment
                     .borrow()
-                    .get_at(*distance, "super".to_string())
+                    .get_at(distance, "super".to_string())
                     .unwrap();
                 let this = self
                     .enviroment
                     .borrow()
-                    .get_at(*distance - 1, "this".to_string())
+                    .get_at(distance - 1, "this".to_string())
                     .unwrap();
 
                 match (superclass, this) {
@@ -433,7 +479,10 @@ impl Interpreter {
                         let fun = match supe.find_method(method.lexeme.clone()) {
                             Some(method) => method,
                             _ => {
-                                return Err(Error::RuntimeError);
+                                return Err(Error::runtime(
+                                    method,
+                                    format!("Undefined property '{}'.", method.lexeme),
+                                ));
                             }
                         };
 
@@ -466,10 +515,12 @@ impl Interpreter {
         self.locals.insert(token.idx, depth);
     }
 
+    /// Writes one diagnostic line to the stderr writer (I/O errors are ignored).
     pub fn report_error(&self, message: &str) {
         let _ = writeln!(self.stderr.borrow_mut(), "{message}");
     }
 
+    /// Runs the statements, stopping at the first runtime error.
     pub fn interpret(&mut self, statements: &Vec<Stmt>) -> Result<(), Error> {
         for statement in statements {
             self.execute_statement(statement)?;

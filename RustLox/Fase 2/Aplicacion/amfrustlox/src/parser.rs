@@ -41,12 +41,24 @@ Unary expressions are expressions with only one operand. Negation is the only un
 Binary expressions are expressions with two operands and one operation.
 In both binary and unary expressions the operand themselves can be expressions, ergo parsing is a recursive operation.
  */
+/// Source line of an operator, kept for runtime error messages.
+/// It is metadata, so it never takes part in AST equality.
+#[derive(Debug, Clone, Copy)]
+pub struct Line(pub usize);
+
+impl PartialEq for Line {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Binary {
         left_operand: Box<Expr>,
         operator: Operator,
         right_operand: Box<Expr>,
+        line: Line,
     },
     Numeric {
         value: String,
@@ -64,6 +76,7 @@ pub enum Expr {
     Unary {
         operator: Operator,
         right_value: Box<Expr>,
+        line: Line,
     },
     Variable {
         name: Token,
@@ -117,17 +130,27 @@ impl Expr {
     }
 
     pub fn binary(left: Expr, operator: Operator, right: Expr) -> Expr {
+        Expr::binary_at(left, operator, right, 0)
+    }
+
+    pub fn binary_at(left: Expr, operator: Operator, right: Expr, line: usize) -> Expr {
         Expr::Binary {
             left_operand: left.into(),
             operator,
             right_operand: right.into(),
+            line: Line(line),
         }
     }
 
     pub fn unary(operator: Operator, right: Expr) -> Expr {
+        Expr::unary_at(operator, right, 0)
+    }
+
+    pub fn unary_at(operator: Operator, right: Expr, line: usize) -> Expr {
         Expr::Unary {
             operator,
             right_value: right.into(),
+            line: Line(line),
         }
     }
 
@@ -302,8 +325,9 @@ impl Parser {
     fn unary(&mut self) -> Result<Expr, Error> {
         if self.match_tokens([TokenType::Bang, TokenType::Minus]) {
             let operator = Operator::from(&self.previous());
+            let line = self.previous().line;
             let right_operand: Expr = self.unary()?;
-            Ok(Expr::unary(operator, right_operand))
+            Ok(Expr::unary_at(operator, right_operand, line))
         } else {
             self.call()
         }
@@ -365,8 +389,9 @@ impl Parser {
         let mut left: Expr = self.comparison()?;
         while self.match_tokens([TokenType::BangEqual, TokenType::EqualEqual]) {
             let operator: Operator = Operator::from(&self.previous());
+            let line = self.previous().line;
             let right: Expr = self.comparison()?;
-            left = Expr::binary(left, operator, right);
+            left = Expr::binary_at(left, operator, right, line);
         }
         Ok(left)
     }
@@ -380,8 +405,9 @@ impl Parser {
             TokenType::LessEqual,
         ]) {
             let operator: Operator = Operator::from(&self.previous());
+            let line = self.previous().line;
             let right: Expr = self.term()?;
-            left = Expr::binary(left, operator, right);
+            left = Expr::binary_at(left, operator, right, line);
         }
         Ok(left)
     }
@@ -390,8 +416,9 @@ impl Parser {
         let mut left: Expr = self.factor()?;
         while self.match_tokens([TokenType::Plus, TokenType::Minus]) {
             let operator: Operator = Operator::from(&self.previous());
+            let line = self.previous().line;
             let right: Expr = self.factor()?;
-            left = Expr::binary(left, operator, right);
+            left = Expr::binary_at(left, operator, right, line);
         }
         Ok(left)
     }
@@ -400,8 +427,9 @@ impl Parser {
         let mut left: Expr = self.unary()?;
         while self.match_tokens([TokenType::Slash, TokenType::Star]) {
             let operator: Operator = Operator::from(&self.previous());
+            let line = self.previous().line;
             let right: Expr = self.unary()?;
-            left = Expr::binary(left, operator, right);
+            left = Expr::binary_at(left, operator, right, line);
         }
         Ok(left)
     }
@@ -428,8 +456,9 @@ impl Parser {
 
         while self.match_tokens([TokenType::Or]) {
             let operator = Operator::from(&self.previous());
+            let line = self.previous().line;
             let right = self.and()?;
-            left = Expr::binary(left, operator, right)
+            left = Expr::binary_at(left, operator, right, line)
         }
         Ok(left)
     }
@@ -439,8 +468,9 @@ impl Parser {
 
         while self.match_tokens([TokenType::And]) {
             let operator = Operator::from(&self.previous());
+            let line = self.previous().line;
             let right = self.equality()?;
-            left = Expr::binary(left, operator, right);
+            left = Expr::binary_at(left, operator, right, line);
         }
 
         Ok(left)

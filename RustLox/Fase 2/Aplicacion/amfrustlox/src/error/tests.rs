@@ -91,3 +91,39 @@ fn errors_can_be_cloned_and_compared() {
     assert_eq!(e.clone(), e);
     assert_ne!(Error::RuntimeError, Error::UndefinedVariable);
 }
+
+/* ---------- runtime errors ---------- */
+
+#[test]
+fn runtime_error_at_a_token_uses_its_line_and_has_no_location() {
+    let t = token(TokenType::Identifier, "x", 9);
+    match Error::runtime(&t, "Boom.") {
+        Error::Runtime(d) => {
+            assert_eq!(d.line, 9);
+            assert_eq!(d.location, "");
+            assert_eq!(d.message, "Boom.");
+        }
+        other => panic!("expected a runtime error, got {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_error_at_an_explicit_line() {
+    assert_eq!(
+        Error::runtime_at(5, "Boom."),
+        Error::runtime(&token(TokenType::Plus, "+", 5), "Boom.")
+    );
+}
+
+#[test]
+fn runtime_error_display_format() {
+    assert_eq!(
+        Error::runtime_at(3, "Division by zero.").to_string(),
+        "[line 3] Runtime error: Division by zero."
+    );
+}
+
+#[test]
+fn located_and_unlocated_runtime_errors_are_distinct() {
+    assert_ne!(Error::runtime_at(1, "x"), Error::RuntimeError);
+}

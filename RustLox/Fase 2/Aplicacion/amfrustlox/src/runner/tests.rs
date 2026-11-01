@@ -8,17 +8,25 @@ fn new_interpreter() -> (Interpreter, Rc<RefCell<Vec<u8>>>) {
     (Interpreter::new(sink), buffer)
 }
 
+fn new_streams() -> (Interpreter, Rc<RefCell<Vec<u8>>>, Rc<RefCell<Vec<u8>>>) {
+    let out = Rc::new(RefCell::new(Vec::<u8>::new()));
+    let err = Rc::new(RefCell::new(Vec::<u8>::new()));
+    let out_sink: Rc<RefCell<dyn Write>> = out.clone();
+    let err_sink: Rc<RefCell<dyn Write>> = err.clone();
+    (Interpreter::with_streams(out_sink, err_sink), out, err)
+}
+
 fn text(buffer: &Rc<RefCell<Vec<u8>>>) -> String {
     String::from_utf8(buffer.borrow().clone()).expect("output should be utf-8")
 }
 
-/// Returns (what the program printed, what the REPL itself wrote).
-fn repl_session(input: &str) -> (String, String) {
-    let (mut interpreter, output) = new_interpreter();
+/// Returns (program output, diagnostics on stderr, what the REPL itself wrote).
+fn repl_session(input: &str) -> (String, String, String) {
+    let (mut interpreter, out, err) = new_streams();
     let mut prompt = Vec::<u8>::new();
     let mut reader = Cursor::new(input.to_string());
     repl(&mut reader, &mut prompt, &mut interpreter).expect("repl should not hit an I/O error");
-    (text(&output), String::from_utf8(prompt).unwrap())
+    (text(&out), text(&err), String::from_utf8(prompt).unwrap())
 }
 
 fn temp_script(tag: &str, contents: &str) -> PathBuf {
@@ -169,68 +177,195 @@ fn run_captured_uses_a_fresh_interpreter_each_time() {
     assert_eq!(second, Err(RunError::Runtime));
 }
 
+#[test]
+fn run_captured_still_returns_the_tuple_form() {
+    let (stdout, result) = run_captured("print 1");
+    assert_eq!(stdout, "");
+    assert_eq!(result, Err(RunError::Parse));
+}
+
+/* =====================================================================
+   Diagnostics routing (stderr writer)
+   ===================================================================== */
+
+#[test]
+fn parse_errors_are_written_to_stderr_not_stdout() {
+    let c = run_captured_streams("print 1");
+    assert_eq!(c.result, Err(RunError::Parse));
+    assert_eq!(c.stdout, "");
+    assert_eq!(c.stderr, "[line 1] Error at end: Expect ';' after value.\n");
+}
+
+#[test]
+fn parse_error_line_numbers_are_reported() {
+    let c = run_captured_streams("var a = 1;\nvar b = ;\n");
+    assert_eq!(c.result, Err(RunError::Parse));
+    assert_eq!(c.stderr, "[line 2] Error at ';': Expect expression.\n");
+}
+
+#[test]
+fn resolver_errors_are_written_to_stderr_not_stdout() {
+    let c = run_captured_streams("{ var a = a; }");
+    assert_eq!(c.result, Err(RunError::Resolve));
+    assert_eq!(c.stdout, "");
+    assert_eq!(
+        c.stderr,
+        "[line 1] Error at 'a': Can't read local variable in its own initializer.\n"
+    );
+}
+
+#[test]
+fn runtime_errors_are_written_to_stderr_not_stdout() {
+    let c = run_captured_streams("print 1; print 1 / 0;");
+    assert_eq!(c.result, Err(RunError::Runtime));
+    assert_eq!(c.stdout, "1\n");
+    assert_eq!(c.stderr, "[line 1] Runtime error: Division by zero.\n");
+}
+
+#[test]
+fn runtime_error_line_numbers_are_reported() {
+    let c = run_captured_streams("var a = 1;\nprint b;\n");
+    assert_eq!(c.result, Err(RunError::Runtime));
+    assert_eq!(c.stderr, "[line 2] Runtime error: Undefined variable 'b'.\n");
+}
+
+#[test]
+fn runtime_error_inside_a_function_reports_the_line_where_it_happens() {
+    let c = run_captured_streams("fun f() {\n  return 1 / 0;\n}\nf();");
+    assert_eq!(c.result, Err(RunError::Runtime));
+    assert_eq!(c.stderr, "[line 2] Runtime error: Division by zero.\n");
+}
+
+#[test]
+fn top_level_return_is_reported_without_a_line() {
+    let c = run_captured_streams("return 1;");
+    assert_eq!(c.result, Err(RunError::Runtime));
+    assert_eq!(c.stderr, "Can't return from top-level code.\n");
+}
+
+#[test]
+fn successful_runs_write_nothing_to_stderr() {
+    let c = run_captured_streams("print 1; var a = 2;");
+    assert_eq!(c.result, Ok(()));
+    assert_eq!(c.stdout, "1\n");
+    assert_eq!(c.stderr, "");
+}
+
+#[test]
+fn diagnostics_accumulate_across_runs_on_one_interpreter() {
+    let (mut interpreter, out, err) = new_streams();
+    assert_eq!(run_source(&mut interpreter, "print 1"), Err(RunError::Parse));
+    assert_eq!(run_source(&mut interpreter, "print this;"), Err(RunError::Resolve));
+    assert_eq!(run_source(&mut interpreter, "print 1 / 0;"), Err(RunError::Runtime));
+    assert_eq!(run_source(&mut interpreter, "print 2;"), Ok(()));
+    assert_eq!(
+        text(&err),
+        "[line 1] Error at end: Expect ';' after value.\n\
+         [line 1] Error at 'this': Can't use 'this' outside of a class.\n\
+         [line 1] Runtime error: Division by zero.\n"
+    );
+    assert_eq!(text(&out), "2\n");
+}
+
+#[test]
+fn a_rejected_program_leaves_the_interpreter_usable_and_silent_on_stdout() {
+    let (mut interpreter, out, _) = new_streams();
+    let _ = run_source(&mut interpreter, "var = 1;");
+    assert_eq!(text(&out), "");
+    assert_eq!(run_source(&mut interpreter, "print \"ok\";"), Ok(()));
+    assert_eq!(text(&out), "ok\n");
+}
+
 /* =====================================================================
    repl
    ===================================================================== */
 
 #[test]
 fn repl_terminates_on_end_of_input() {
-    let (output, prompt) = repl_session("");
+    let (output, errors, prompt) = repl_session("");
     assert_eq!(output, "");
+    assert_eq!(errors, "");
     assert_eq!(prompt, ">>> \n"); // one prompt, then a newline on EOF
 }
 
 #[test]
 fn repl_runs_each_line_and_prompts_before_each() {
-    let (output, prompt) = repl_session("print 1;\nprint 2;\n");
+    let (output, _, prompt) = repl_session("print 1;\nprint 2;\n");
     assert_eq!(output, "1\n2\n");
     assert_eq!(prompt.matches(">>> ").count(), 3); // two lines + the final EOF read
 }
 
 #[test]
 fn repl_keeps_state_between_lines() {
-    let (output, _) = repl_session("var a = 1;\nvar b = a + 1;\nprint b;\n");
+    let (output, _, _) = repl_session("var a = 1;\nvar b = a + 1;\nprint b;\n");
     assert_eq!(output, "2\n");
 }
 
 #[test]
 fn repl_handles_a_last_line_without_newline() {
-    let (output, _) = repl_session("print 7;");
+    let (output, _, _) = repl_session("print 7;");
     assert_eq!(output, "7\n");
 }
 
 #[test]
 fn repl_skips_blank_lines() {
-    let (output, prompt) = repl_session("\n   \nprint 1;\n");
+    let (output, errors, _) = repl_session("\n   \nprint 1;\n");
     assert_eq!(output, "1\n");
+    assert_eq!(errors, "");
+}
+
+#[test]
+fn repl_reports_parse_errors_on_stderr_and_continues() {
+    let (output, errors, prompt) = repl_session("print 1\nprint 2;\n");
+    assert_eq!(output, "2\n");
+    assert_eq!(errors, "[line 1] Error at end: Expect ';' after value.\n");
+    assert!(!prompt.contains("Expect"), "details belong on stderr");
+}
+
+#[test]
+fn repl_reports_resolver_errors_on_stderr_and_continues() {
+    let (output, errors, _) = repl_session("{ var a = a; }\nprint 2;\n");
+    assert_eq!(output, "2\n");
+    assert_eq!(
+        errors,
+        "[line 1] Error at 'a': Can't read local variable in its own initializer.\n"
+    );
+}
+
+#[test]
+fn repl_reports_runtime_errors_on_stderr_and_continues() {
+    let (output, errors, prompt) = repl_session("print missing;\nprint 2;\n");
+    assert_eq!(output, "2\n");
+    assert_eq!(errors, "[line 1] Runtime error: Undefined variable 'missing'.\n");
     assert!(!prompt.contains("error"));
 }
 
 #[test]
-fn repl_reports_parse_errors_and_continues() {
-    let (output, prompt) = repl_session("print 1\nprint 2;\n");
-    assert_eq!(output, "2\n");
-    assert!(prompt.contains("Parse error."));
-}
-
-#[test]
-fn repl_reports_resolver_errors_and_continues() {
-    let (output, prompt) = repl_session("{ var a = a; }\nprint 2;\n");
-    assert_eq!(output, "2\n");
-    assert!(prompt.contains("Resolver error."));
-}
-
-#[test]
-fn repl_reports_runtime_errors_and_continues() {
-    let (output, prompt) = repl_session("print missing;\nprint 2;\n");
-    assert_eq!(output, "2\n");
-    assert!(prompt.contains("Runtime error."));
-}
-
-#[test]
 fn repl_state_survives_a_failed_line() {
-    let (output, _) = repl_session("var a = 5;\nprint a / 0;\nprint a;\n");
+    let (output, _, _) = repl_session("var a = 5;\nprint a / 0;\nprint a;\n");
     assert_eq!(output, "5\n");
+}
+
+#[test]
+fn repl_line_numbers_restart_for_each_line() {
+    let (_, errors, _) = repl_session("print ;\nprint ;\n");
+    assert_eq!(
+        errors,
+        "[line 1] Error at ';': Expect expression.\n[line 1] Error at ';': Expect expression.\n"
+    );
+}
+
+#[test]
+fn repl_reports_end_of_input_errors_on_line_one() {
+    let (_, errors, _) = repl_session("print 1\n");
+    assert_eq!(errors, "[line 1] Error at end: Expect ';' after value.\n");
+}
+
+#[test]
+fn repl_handles_windows_line_endings() {
+    let (output, errors, _) = repl_session("print 1\r\nprint 2;\r\n");
+    assert_eq!(errors, "[line 1] Error at end: Expect ';' after value.\n");
+    assert_eq!(output, "2\n");
 }
 
 /* =====================================================================
@@ -263,10 +398,12 @@ fn run_file_resolver_error_returns_65() {
 }
 
 #[test]
-fn run_file_runtime_error_returns_70() {
-    let path = temp_script("runtime", "print 1 / 0;");
-    let (mut interpreter, _) = new_interpreter();
+fn run_file_runtime_error_returns_70_and_reports_it() {
+    let path = temp_script("runtime", "print 1;\nprint 1 / 0;");
+    let (mut interpreter, out, err) = new_streams();
     assert_eq!(run_file(&mut interpreter, path.to_str().unwrap()), 70);
+    assert_eq!(text(&out), "1\n");
+    assert_eq!(text(&err), "[line 2] Runtime error: Division by zero.\n");
     let _ = std::fs::remove_file(path);
 }
 
@@ -274,116 +411,4 @@ fn run_file_runtime_error_returns_70() {
 fn run_file_missing_file_returns_74() {
     let (mut interpreter, _) = new_interpreter();
     assert_eq!(run_file(&mut interpreter, "/definitely/not/here.lox"), 74);
-}
-
-/* =====================================================================
-   Diagnostics routing (stderr writer)
-   ===================================================================== */
-
-fn new_streams() -> (Interpreter, Rc<RefCell<Vec<u8>>>, Rc<RefCell<Vec<u8>>>) {
-    let out = Rc::new(RefCell::new(Vec::<u8>::new()));
-    let err = Rc::new(RefCell::new(Vec::<u8>::new()));
-    let out_sink: Rc<RefCell<dyn Write>> = out.clone();
-    let err_sink: Rc<RefCell<dyn Write>> = err.clone();
-    (Interpreter::with_streams(out_sink, err_sink), out, err)
-}
-
-#[test]
-fn parse_errors_are_written_to_stderr_not_stdout() {
-    let c = run_captured_streams("print 1");
-    assert_eq!(c.result, Err(RunError::Parse));
-    assert_eq!(c.stdout, "");
-    assert_eq!(c.stderr, "[line 1] Error at end: Expect ';' after value.\n");
-}
-
-#[test]
-fn parse_error_line_numbers_are_reported() {
-    let c = run_captured_streams("var a = 1;\nvar b = ;\n");
-    assert_eq!(c.result, Err(RunError::Parse));
-    assert_eq!(c.stderr, "[line 2] Error at ';': Expect expression.\n");
-}
-
-#[test]
-fn resolver_errors_are_written_to_stderr_not_stdout() {
-    let c = run_captured_streams("{ var a = a; }");
-    assert_eq!(c.result, Err(RunError::Resolve));
-    assert_eq!(c.stdout, "");
-    assert_eq!(
-        c.stderr,
-        "[line 1] Error at 'a': Can't read local variable in its own initializer.\n"
-    );
-}
-
-#[test]
-fn successful_runs_write_nothing_to_stderr() {
-    let c = run_captured_streams("print 1; var a = 2;");
-    assert_eq!(c.result, Ok(()));
-    assert_eq!(c.stdout, "1\n");
-    assert_eq!(c.stderr, "");
-}
-
-/// Documents CURRENT behaviour: runtime errors carry no message yet, so only
-/// the `RunError::Runtime` result signals them.
-#[test]
-fn runtime_errors_do_not_write_to_stderr_yet() {
-    let c = run_captured_streams("print 1; print 1 / 0;");
-    assert_eq!(c.result, Err(RunError::Runtime));
-    assert_eq!(c.stdout, "1\n");
-    assert_eq!(c.stderr, "");
-}
-
-#[test]
-fn diagnostics_accumulate_across_runs_on_one_interpreter() {
-    let (mut interpreter, out, err) = new_streams();
-    assert_eq!(run_source(&mut interpreter, "print 1"), Err(RunError::Parse));
-    assert_eq!(run_source(&mut interpreter, "print this;"), Err(RunError::Resolve));
-    assert_eq!(run_source(&mut interpreter, "print 2;"), Ok(()));
-    assert_eq!(
-        text(&err),
-        "[line 1] Error at end: Expect ';' after value.\n\
-         [line 1] Error at 'this': Can't use 'this' outside of a class.\n"
-    );
-    assert_eq!(text(&out), "2\n");
-}
-
-#[test]
-fn a_rejected_program_leaves_the_interpreter_usable_and_silent_on_stdout() {
-    let (mut interpreter, out, _) = new_streams();
-    let _ = run_source(&mut interpreter, "var = 1;");
-    assert_eq!(text(&out), "");
-    assert_eq!(run_source(&mut interpreter, "print \"ok\";"), Ok(()));
-    assert_eq!(text(&out), "ok\n");
-}
-
-#[test]
-fn run_captured_still_returns_the_tuple_form() {
-    let (stdout, result) = run_captured("print 1");
-    assert_eq!(stdout, "");
-    assert_eq!(result, Err(RunError::Parse));
-}
-
-#[test]
-fn repl_sends_diagnostics_to_stderr_and_a_summary_to_the_prompt() {
-    let (mut interpreter, out, err) = new_streams();
-    let mut prompt = Vec::<u8>::new();
-    let mut reader = Cursor::new("print 1\nprint 2;\n".to_string());
-    repl(&mut reader, &mut prompt, &mut interpreter).unwrap();
-
-    assert_eq!(text(&out), "2\n");
-    assert_eq!(text(&err), "[line 1] Error at end: Expect ';' after value.\n");
-    let prompt = String::from_utf8(prompt).unwrap();
-    assert!(prompt.contains("Parse error."));
-    assert!(!prompt.contains("Expect ';'"), "details belong on stderr");
-}
-
-#[test]
-fn repl_line_numbers_restart_for_each_line() {
-    let (mut interpreter, _, err) = new_streams();
-    let mut prompt = Vec::<u8>::new();
-    let mut reader = Cursor::new("print ;\nprint ;\n".to_string());
-    repl(&mut reader, &mut prompt, &mut interpreter).unwrap();
-    assert_eq!(
-        text(&err),
-        "[line 1] Error at ';': Expect expression.\n[line 1] Error at ';': Expect expression.\n"
-    );
 }

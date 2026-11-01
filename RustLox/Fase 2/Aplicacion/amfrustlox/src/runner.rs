@@ -3,8 +3,8 @@
 //!
 //! Output streams:
 //!   * program output (`print`)              -> the interpreter's `stdout` writer
-//!   * parse / resolve diagnostics           -> the interpreter's `stderr` writer
-//!   * REPL prompt and one-line error summary -> the writer given to `repl`
+//!   * parse / resolve / runtime diagnostics -> the interpreter's `stderr` writer
+//!   * REPL prompt                           -> the writer given to `repl`
 use std::{
     cell::RefCell,
     fmt,
@@ -45,7 +45,7 @@ impl fmt::Display for RunError {
 }
 
 /// Runs `source` on an existing interpreter (so state persists between calls).
-/// Parse and resolve diagnostics are written to the interpreter's stderr writer.
+/// Parse, resolve and runtime diagnostics are written to the interpreter's stderr writer.
 pub fn run_source(interpreter: &mut Interpreter, source: &str) -> Result<(), RunError> {
     let tokens = Scanner::new(source)
         .scan_tokens()
@@ -69,9 +69,13 @@ pub fn run_source(interpreter: &mut Interpreter, source: &str) -> Result<(), Run
         }
     };
 
-    interpreter
-        .interpret(&statements)
-        .map_err(|_| RunError::Runtime)
+    match interpreter.interpret(&statements) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            interpreter.report_error(&error.to_string());
+            Err(RunError::Runtime)
+        }
+    }
 }
 
 /// Everything a run produced, for tests and tooling.
@@ -116,15 +120,13 @@ pub fn run_file(interpreter: &mut Interpreter, path: &str) -> i32 {
     };
     match run_source(interpreter, &source) {
         Ok(()) => 0,
-        Err(error) => {
-            eprintln!("{error}");
-            error.exit_code()
-        }
+        // The diagnostic was already written to the interpreter's stderr.
+        Err(error) => error.exit_code(),
     }
 }
 
 /// Interactive loop. Returns `Ok(())` on end of input (Ctrl-D).
-/// Errors in a line are summarised on `prompt` and the loop continues.
+/// Errors in a line are reported on the interpreter's stderr and the loop continues.
 pub fn repl<R: BufRead, W: Write>(
     input: &mut R,
     prompt: &mut W,
@@ -142,9 +144,10 @@ pub fn repl<R: BufRead, W: Write>(
         if line.trim().is_empty() {
             continue;
         }
-        if let Err(error) = run_source(interpreter, &line) {
-            writeln!(prompt, "{error}")?;
-        }
+        // `read_line` keeps the line terminator; strip it so an "at end" error
+        // is reported on line 1 instead of on a phantom line 2.
+        let source = line.trim_end_matches(['\n', '\r']);
+        let _ = run_source(interpreter, source);
     }
 }
 

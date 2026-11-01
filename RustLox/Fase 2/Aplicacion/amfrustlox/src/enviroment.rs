@@ -46,6 +46,8 @@ impl Enviroment {
         }
     }
 
+    /// Assigns to an existing binding. The caller decides how to report a
+    /// failure (it knows the source position); nothing is printed here.
     pub fn assign(&mut self, key: String, value: Value) -> Result<(), Error> {
         if self.values.contains_key(&key) {
             self.values.insert(key, value);
@@ -53,29 +55,25 @@ impl Enviroment {
         } else if let Some(enclosing) = &self.enclosing {
             enclosing.as_ref().borrow_mut().assign(key, value)
         } else {
-            println!("Undefined variable at assign {}.", key);
             Err(Error::UndefinedVariable)
         }
     }
 
+    /// Assigns at a resolver-computed distance. A missing binding is ignored
+    /// silently; the resolver guarantees it exists.
     pub fn assign_at(&mut self, key: String, distance: usize, value: Value) {
         if distance == 0 {
             if let Some(val) = self.values.get_mut(&key) {
                 *val = value;
-            } else {
-                println!("undefined Variable at assign_at inside {}", &key);
             }
         } else if let Some(parent) = &self.enclosing {
             parent
                 .as_ref()
                 .borrow_mut()
                 .assign_at(key, distance - 1, value);
-        } else {
-            println!("undefined variable at assign_at outside {}", &key);
         }
     }
 }
 
-
-   #[cfg(test)]
-   mod tests;
+#[cfg(test)]
+mod tests;

@@ -243,6 +243,7 @@ impl<'a> Resolver<'a> {
                 left_operand,
                 operator: _,
                 right_operand,
+                line: _,
             } => {
                 self.resolve_expression(left_operand)?;
                 self.resolve_expression(right_operand)
@@ -255,6 +256,7 @@ impl<'a> Resolver<'a> {
             Expr::Unary {
                 operator: _,
                 right_value,
+                line: _,
             } => self.resolve_expression(right_value),
             Expr::Variable { name } => {
                 if let Some(last) = self.scopes.last() {

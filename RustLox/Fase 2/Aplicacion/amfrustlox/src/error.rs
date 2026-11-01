@@ -41,6 +41,9 @@ pub enum Error {
     Syntax(Diagnostic),
     /// Produced by the resolver.
     Resolve(Diagnostic),
+    /// A located failure while the program runs (type errors, undefined names, ...).
+    Runtime(Diagnostic),
+    /// A failure with no source position (e.g. a native function failing).
     RuntimeError,
     Return(Value),
     UndefinedVariable,
@@ -54,12 +57,29 @@ impl Error {
     pub fn resolve(token: &Token, message: impl Into<String>) -> Error {
         Error::Resolve(Diagnostic::at(token, message))
     }
+
+    /// Runtime error located at the line of `token`.
+    pub fn runtime(token: &Token, message: impl Into<String>) -> Error {
+        Error::runtime_at(token.line, message)
+    }
+
+    /// Runtime error located at an explicit line.
+    pub fn runtime_at(line: usize, message: impl Into<String>) -> Error {
+        Error::Runtime(Diagnostic {
+            line,
+            location: String::new(),
+            message: message.into(),
+        })
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Syntax(d) | Error::Resolve(d) => write!(f, "{d}"),
+            Error::Runtime(d) => {
+                write!(f, "[line {}] Runtime error{}: {}", d.line, d.location, d.message)
+            }
             Error::RuntimeError => write!(f, "Runtime error."),
             Error::Return(_) => write!(f, "Can't return from top-level code."),
             Error::UndefinedVariable => write!(f, "Undefined variable."),

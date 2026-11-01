@@ -1164,3 +1164,195 @@ fn new_keeps_diagnostics_out_of_the_stdout_writer() {
     interpreter.report_error("diagnostic");
     assert!(buffer.borrow().is_empty());
 }
+
+/* =====================================================================
+   Runtime error messages (line + message)
+   ===================================================================== */
+
+use crate::error::Diagnostic;
+
+fn runtime_error(src: &str) -> Diagnostic {
+    let (mut interpreter, _) = new_interpreter();
+    match try_run_in(&mut interpreter, src) {
+        Err(Error::Runtime(d)) => d,
+        Err(other) => panic!("expected a located runtime error for `{src}`, got {other:?}"),
+        Ok(()) => panic!("`{src}` should fail at runtime"),
+    }
+}
+
+fn assert_runtime_error(src: &str, line: usize, message: &str) {
+    let d = runtime_error(src);
+    assert_eq!(
+        (d.line, d.location.as_str(), d.message.as_str()),
+        (line, "", message),
+        "source: {src:?}"
+    );
+}
+
+#[test]
+fn division_by_zero_message() {
+    assert_runtime_error("print 1 / 0;", 1, "Division by zero.");
+    assert_runtime_error("var a = 1;\nvar b = 2;\nprint a / 0;", 3, "Division by zero.");
+}
+
+#[test]
+fn division_reports_the_line_of_the_operator() {
+    assert_runtime_error("print 1\n/\n0;", 2, "Division by zero.");
+}
+
+#[test]
+fn addition_type_error_message() {
+    assert_runtime_error(r#"print 1 + "a";"#, 1, "Operands must be two numbers or two strings.");
+    assert_runtime_error(r#"print "a" + 1;"#, 1, "Operands must be two numbers or two strings.");
+    assert_runtime_error("print nil + nil;", 1, "Operands must be two numbers or two strings.");
+    assert_runtime_error("print true + 1;", 1, "Operands must be two numbers or two strings.");
+}
+
+#[test]
+fn arithmetic_type_error_message() {
+    assert_runtime_error(r#"print "a" - "b";"#, 1, "Operands must be numbers.");
+    assert_runtime_error(r#"print "a" * 2;"#, 1, "Operands must be numbers.");
+    assert_runtime_error("print nil / 1;", 1, "Operands must be numbers.");
+    assert_runtime_error("print 1 / nil;", 1, "Operands must be numbers.");
+}
+
+#[test]
+fn comparison_type_error_message() {
+    assert_runtime_error(r#"print 1 < "a";"#, 1, "Operands must be two numbers or two strings.");
+    assert_runtime_error("print nil > 1;", 1, "Operands must be two numbers or two strings.");
+    assert_runtime_error("print true <= false;", 1, "Operands must be two numbers or two strings.");
+}
+
+#[test]
+fn unary_minus_type_error_message() {
+    assert_runtime_error(r#"print -"a";"#, 1, "Operand must be a number.");
+    assert_runtime_error("print -true;", 1, "Operand must be a number.");
+    assert_runtime_error("print\n-nil;", 2, "Operand must be a number.");
+}
+
+#[test]
+fn undefined_variable_message() {
+    assert_runtime_error("print missing;", 1, "Undefined variable 'missing'.");
+    assert_runtime_error("var a = 1;\nprint b;", 2, "Undefined variable 'b'.");
+}
+
+#[test]
+fn assigning_an_undefined_variable_message() {
+    assert_runtime_error("missing = 1;", 1, "Undefined variable 'missing'.");
+}
+
+#[test]
+fn calling_a_non_callable_message() {
+    assert_runtime_error("var a = 1; a();", 1, "Can only call functions and classes.");
+    assert_runtime_error("\"str\"();", 1, "Can only call functions and classes.");
+    assert_runtime_error("nil();", 1, "Can only call functions and classes.");
+}
+
+#[test]
+fn wrong_argument_count_message() {
+    assert_runtime_error("fun f(a) {}\nf();", 2, "Expected 1 arguments but got 0.");
+    assert_runtime_error("fun f() {}\nf(1, 2);", 2, "Expected 0 arguments but got 2.");
+    assert_runtime_error("class A { init(x, y) {} }\nA(1);", 2, "Expected 2 arguments but got 1.");
+    assert_runtime_error("class A {}\nA(1);", 2, "Expected 0 arguments but got 1.");
+    assert_runtime_error("clock(1);", 1, "Expected 0 arguments but got 1.");
+}
+
+#[test]
+fn property_error_messages() {
+    assert_runtime_error(
+        "class A {}\nvar a = A();\nprint a.x;",
+        3,
+        "Undefined property 'x'.",
+    );
+    assert_runtime_error("var n = 1; print n.x;", 1, "Only instances have properties.");
+    assert_runtime_error("var n = 1; n.x = 2;", 1, "Only instances have fields.");
+    assert_runtime_error("var s = \"str\"; print s.length;", 1, "Only instances have properties.");
+}
+
+#[test]
+fn superclass_must_be_a_class_message() {
+    assert_runtime_error("var N = 1;\nclass B < N {}", 2, "Superclass must be a class.");
+    assert_runtime_error("fun f() {}\nclass B < f {}", 2, "Superclass must be a class.");
+}
+
+#[test]
+fn missing_super_method_message() {
+    assert_runtime_error(
+        "class A {}\nclass B < A {\n  m() { return super.missing(); }\n}\nB().m();",
+        3,
+        "Undefined property 'missing'.",
+    );
+}
+
+#[test]
+fn errors_inside_a_function_report_their_own_line() {
+    assert_runtime_error(
+        "fun divide(a, b) {\n  return a / b;\n}\nprint divide(1, 0);",
+        2,
+        "Division by zero.",
+    );
+}
+
+#[test]
+fn errors_in_a_method_report_their_own_line() {
+    assert_runtime_error(
+        "class A {\n  boom() {\n    return missing;\n  }\n}\nA().boom();",
+        3,
+        "Undefined variable 'missing'.",
+    );
+}
+
+#[test]
+fn errors_propagate_unchanged_through_loops_blocks_and_ifs() {
+    assert_runtime_error("while (true) { print 1 / 0; }", 1, "Division by zero.");
+    assert_runtime_error("{ { print missing; } }", 1, "Undefined variable 'missing'.");
+    assert_runtime_error("if (true) print nil + 1;", 1, "Operands must be two numbers or two strings.");
+    assert_runtime_error("for (var i = 0; i < 3; i = i + 1) print i / 0;", 1, "Division by zero.");
+}
+
+#[test]
+fn errors_in_arguments_are_reported_before_the_call() {
+    assert_runtime_error("fun f(a) {}\nf(1 / 0);", 2, "Division by zero.");
+    assert_runtime_error("fun f(a) {}\nf(missing);", 2, "Undefined variable 'missing'.");
+}
+
+#[test]
+fn native_failures_are_reported_at_the_call_site() {
+    let (mut interpreter, _) = new_interpreter();
+    let failing: BoxedFunction = Box::new(|_| Err(Error::RuntimeError));
+    interpreter.globals.borrow_mut().define(
+        "boom".to_string(),
+        Value::Callable(Rc::new(Native::new(failing, "boom".to_string(), 0))),
+    );
+    match try_run_in(&mut interpreter, "print 1;\nboom();") {
+        Err(Error::Runtime(d)) => {
+            assert_eq!(d.line, 2);
+            assert_eq!(d.message, "Native function failed.");
+        }
+        _ => panic!("expected a located runtime error"),
+    }
+}
+
+#[test]
+fn runtime_error_display_is_lox_style() {
+    let (mut interpreter, _) = new_interpreter();
+    match try_run_in(&mut interpreter, "print 1 / 0;") {
+        Err(error) => assert_eq!(error.to_string(), "[line 1] Runtime error: Division by zero."),
+        Ok(()) => panic!("should fail"),
+    }
+}
+
+#[test]
+fn a_failed_run_does_not_poison_the_interpreter() {
+    let (mut interpreter, _) = new_interpreter();
+    assert!(try_run_in(&mut interpreter, "print 1 / 0;").is_err());
+    assert!(try_run_in(&mut interpreter, "var ok = 1;").is_ok());
+    assert_eq!(global(&interpreter, "ok"), Some(num(1.0)));
+}
+
+#[test]
+fn while_loop_keeps_the_original_error() {
+    // Regression: the loop used to replace every error with a bare `RuntimeError`.
+    let d = runtime_error("var i = 0; while (i < 3) { i = missing; }");
+    assert_eq!(d.message, "Undefined variable 'missing'.");
+}
