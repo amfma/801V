@@ -761,13 +761,11 @@ fn malformed_for_is_an_error() {
 }
 
 #[test]
-#[ignore = "known bug: for_statement `expect`s an increment clause and panics without one"]
 fn for_loop_without_increment_parses() {
     assert!(!program_fails("for (var i = 0; i < 3;) print i;"));
 }
 
 #[test]
-#[ignore = "known bug: for_statement `expect`s an initializer clause and panics without one"]
 fn for_loop_without_initializer_parses() {
     assert!(!program_fails("for (; true; i = i + 1) print i;"));
 }
@@ -887,4 +885,29 @@ fn malformed_classes_are_errors() {
     assert!(program_fails("class A"));
     assert!(program_fails("class A { m() }"));
     assert!(program_fails("class A { m() {} "));
+}
+
+#[test]
+fn for_loop_without_initializer_has_no_wrapping_block() {
+    let stmts = parse_program("for (; true; i = i + 1) print i;");
+    assert!(matches!(stmts[0], Stmt::While { .. }));
+}
+
+#[test]
+fn for_loop_without_increment_uses_the_body_directly() {
+    match &parse_program("for (var i = 0; i < 3;) print i;")[0] {
+        Stmt::Block { statements } => match &statements[1] {
+            Stmt::While { body, .. } => assert!(matches!(**body, Stmt::Print { .. })),
+            other => panic!("expected while, got {other:?}"),
+        },
+        other => panic!("expected block, got {other:?}"),
+    }
+}
+
+#[test]
+fn for_loop_without_condition_loops_forever_by_default() {
+    match &parse_program("for (;;) print 1;")[0] {
+        Stmt::While { contion, .. } => assert_eq!(*contion, Expr::bool(true)),
+        other => panic!("expected while, got {other:?}"),
+    }
 }

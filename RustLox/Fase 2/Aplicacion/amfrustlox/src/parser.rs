@@ -92,12 +92,12 @@ pub enum Expr {
         value: Box<Expr>,
     },
     This {
-        keyword: Token
+        keyword: Token,
     },
     Super {
         keyword: Token,
-        method: Token
-    }
+        method: Token,
+    },
 }
 
 impl Expr {
@@ -177,9 +177,7 @@ impl Expr {
     }
 
     pub fn this(keyword: Token) -> Expr {
-        Expr::This {
-            keyword
-        }
+        Expr::This { keyword }
     }
 
     pub fn superkw(keyword: Token, method: Token) -> Expr {
@@ -244,7 +242,7 @@ pub enum Stmt {
     Class {
         name: Token,
         methods: Vec<Stmt>,
-        superclass: Option<Expr>
+        superclass: Option<Expr>,
     },
 }
 
@@ -291,7 +289,10 @@ impl Parser {
         } else if self.match_tokens([TokenType::Super]) {
             let keyword = self.previous().clone();
             self.consume(TokenType::Dot, "Expect '.' after 'super'.".to_string())?;
-            self.consume(TokenType::Identifier, "Expect superclass method name.".to_string())?;
+            self.consume(
+                TokenType::Identifier,
+                "Expect superclass method name.".to_string(),
+            )?;
             let method = self.previous().clone();
             Ok(Expr::superkw(keyword, method))
         } else {
@@ -554,11 +555,10 @@ impl Parser {
         } else {
             Some(self.expression_statement()?)
         };
-
         let condition = if !self.check(TokenType::Semicolon) {
             self.expression()?
         } else {
-            Expr::Nil
+            Expr::Bool { value: true } // was Expr::Nil, which is falsy
         };
         self.consume(
             TokenType::Semicolon,
@@ -572,26 +572,26 @@ impl Parser {
         };
         self.consume(
             TokenType::RightParen,
-            "Expected `)` after `for` clauses".to_string(),
+            "Expect ')' after for clauses.".to_string(),
         )?;
 
-        let body = Stmt::Block {
-            statements: vec![
-                self.statement()?,
-                Stmt::Expression {
-                    expr: increment.expect("Error fatal"),
-                },
-            ],
+        let mut body = self.statement()?;
+        if let Some(increment) = increment {
+            body = Stmt::Block {
+                statements: vec![body, Stmt::Expression { expr: increment }],
+            };
+        }
+
+        let looped = Stmt::While {
+            contion: condition,
+            body: Box::new(body),
         };
 
-        Ok(Stmt::Block {
-            statements: vec![
-                initializer.expect("Error fatal"),
-                Stmt::While {
-                    contion: condition,
-                    body: Box::new(body),
-                },
-            ],
+        Ok(match initializer {
+            Some(init) => Stmt::Block {
+                statements: vec![init, looped],
+            },
+            None => looped,
         })
     }
 
@@ -646,7 +646,11 @@ impl Parser {
             TokenType::RightBrace,
             "Expect '}' after class body.".to_string(),
         )?;
-        Ok(Stmt::Class { name, methods, superclass: superclass })
+        Ok(Stmt::Class {
+            name,
+            methods,
+            superclass: superclass,
+        })
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, Error> {
@@ -781,5 +785,5 @@ pub struct ast {
     pub start: Vec<Expr>,
 }
 
-   #[cfg(test)]
-   mod tests;
+#[cfg(test)]
+mod tests;

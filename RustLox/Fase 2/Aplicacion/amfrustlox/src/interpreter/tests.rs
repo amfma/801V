@@ -149,10 +149,10 @@ fn new_interpreter_predefines_clock() {
 }
 
 #[test]
-fn clock_writes_to_the_injected_stdout() {
+fn clock_does_not_print_anything() {
     let (mut interpreter, buffer) = new_interpreter();
     assert!(try_run_in(&mut interpreter, "clock();").is_ok());
-    assert!(!buffer.borrow().is_empty());
+    assert!(buffer.borrow().is_empty());
 }
 
 #[test]
@@ -161,9 +161,16 @@ fn clock_rejects_arguments() {
 }
 
 #[test]
-#[ignore = "known gap: clock prints the time and returns nil instead of returning a number"]
 fn clock_returns_a_number() {
-    assert!(matches!(eval("clock()"), Value::Number(_)));
+    assert!(matches!(eval("clock()"), Value::Number(n) if n > 0.0));
+}
+
+#[test]
+fn clock_is_monotonic_enough_for_timing() {
+    assert_eq!(
+        eval("clock() <= clock()"),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
@@ -346,13 +353,23 @@ fn logical_and_returns_an_operand() {
 }
 
 #[test]
+fn short_circuit_still_evaluates_the_right_side_when_needed() {
+    let interpreter = run(r#"
+        var calls = 0;
+        fun bump() { calls = calls + 1; return true; }
+        var a = false or bump();
+        var b = true and bump();
+    "#);
+    assert_eq!(global(&interpreter, "calls"), Some(num(2.0)));
+}
+
+#[test]
 fn logical_operator_precedence() {
     assert_eq!(eval("true or false and false"), boolean(true));
     assert_eq!(eval("false and false or true"), boolean(true));
 }
 
 #[test]
-#[ignore = "known bug: `or` evaluates its right operand even when the left is truthy"]
 fn or_short_circuits() {
     let interpreter = run(r#"
         var calls = 0;
@@ -363,7 +380,6 @@ fn or_short_circuits() {
 }
 
 #[test]
-#[ignore = "known bug: `and` evaluates its right operand even when the left is falsy"]
 fn and_short_circuits() {
     let interpreter = run(r#"
         var calls = 0;
@@ -547,6 +563,30 @@ fn for_loop_with_block_body() {
         for (var i = 1; i <= 5; i = i + 1) { product = product * i; }
     "#);
     assert_eq!(global(&interpreter, "product"), Some(num(120.0)));
+}
+
+#[test]
+fn for_loop_without_increment() {
+    let interpreter = run("var n = 0; for (var i = 0; i < 3;) { i = i + 1; n = n + 1; }");
+    assert_eq!(global(&interpreter, "n"), Some(num(3.0)));
+}
+
+#[test]
+fn for_loop_without_initializer() {
+    let interpreter = run("var i = 0; for (; i < 4; i = i + 1) {}");
+    assert_eq!(global(&interpreter, "i"), Some(num(4.0)));
+}
+
+#[test]
+fn for_loop_without_any_clause_runs_until_return() {
+    let interpreter = run(r#"
+        fun f() {
+            var n = 0;
+            for (;;) { n = n + 1; if (n == 5) return n; }
+        }
+        var r = f();
+    "#);
+    assert_eq!(global(&interpreter, "r"), Some(num(5.0)));
 }
 
 #[test]

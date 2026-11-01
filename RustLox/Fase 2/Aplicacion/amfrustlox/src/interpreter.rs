@@ -81,13 +81,10 @@ impl std::fmt::Display for Value {
 impl Interpreter {
     pub fn new(stdout: Rc<RefCell<dyn Write>>) -> Self {
         let globals = Rc::new(RefCell::new(Enviroment::new(None)));
-        let clock_out = stdout.clone();
 
-        let clock: BoxedFunction = Box::new(move |_| {
-            let start = SystemTime::now();
-            let since_epoch = start.duration_since(UNIX_EPOCH).unwrap();
-            writeln!(clock_out.borrow_mut(), "{:?}\n", since_epoch).unwrap();
-            Ok(Value::Nil)
+        let clock: BoxedFunction = Box::new(|_| {
+            let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            Ok(Value::Number(since_epoch.as_secs_f64()))
         });
 
         let clock_callable = Native::new(clock, String::from("clock"), 0);
@@ -256,6 +253,25 @@ impl Interpreter {
                 right_operand,
             } => {
                 let left = self.evaluate_expression(&left_operand)?;
+
+                match operator {
+                    Operator::Or => {
+                        return if left.is_truthy() {
+                            Ok(left)
+                        } else {
+                            self.evaluate_expression(right_operand)
+                        };
+                    }
+                    Operator::Add => {
+                        return if !left.is_truthy() {
+                            Ok(left)
+                        } else {
+                            self.evaluate_expression(right_operand)
+                        };
+                    }
+                    _ => {}
+                }
+
                 let right = self.evaluate_expression(&right_operand)?;
 
                 match (&left, operator, &right) {
@@ -307,20 +323,6 @@ impl Interpreter {
                     /* Type agnostic comparisions */
                     (_, Operator::Equal, _) => Ok(Value::Boolean(left == right)),
                     (_, Operator::Inequal, _) => Ok(Value::Boolean(left != right)),
-                    (_, Operator::Or, _) => {
-                        if left.is_truthy() {
-                            Ok(left)
-                        } else {
-                            Ok(right)
-                        }
-                    }
-                    (_, Operator::And, _) => {
-                        if !left.is_truthy() {
-                            Ok(left)
-                        } else {
-                            Ok(right)
-                        }
-                    }
                     _ => return Err(Error::RuntimeError),
                 }
             }
@@ -464,5 +466,5 @@ impl Interpreter {
     }
 }
 
-   #[cfg(test)]
-   mod tests;
+#[cfg(test)]
+mod tests;
