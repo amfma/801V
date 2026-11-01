@@ -262,7 +262,7 @@ impl Interpreter {
                             self.evaluate_expression(right_operand)
                         };
                     }
-                    Operator::Add => {
+                    Operator::And => {
                         return if !left.is_truthy() {
                             Ok(left)
                         } else {
