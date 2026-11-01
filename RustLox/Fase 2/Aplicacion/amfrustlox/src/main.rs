@@ -1,46 +1,25 @@
-use std::{cell::{Ref, RefCell}, env, fmt::format, io::{self, Write, stdin}, rc::Rc};
+use std::{cell::RefCell, env, io, process, rc::Rc};
 
-use crate::{resolver::Resolver, token::{Scanner, Token}};
-use crate::parser::{Expr, Parser};
-use crate::interpreter::{Interpreter};
-
-mod token;
-mod parser;
-mod error;
-mod interpreter;
-mod enviroment;
-mod callable;
-mod resolver;
+use amfrustlox::{interpreter::Interpreter, runner};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let mut interpreter = Interpreter::new(Rc::new(RefCell::new(io::stdout())));
 
-    if args.len() == 1 {
-        run_rompt();
-    }
-}
-
-fn run_rompt() {
-    let mut interpreter: Interpreter = Interpreter::new(Rc::new(RefCell::new(io::stdout())));
-
-    loop {
-        let mut buffer: String = String::new();
-        print!(">>>");
-        io::stdout().flush().expect("Console flush error");
-        std::io::stdin().read_line(&mut buffer).expect("Expect input to be read");
-        //buffer.push();
-        let scanner = Scanner::new(&buffer);
-        let tokens: Vec<Token> = scanner.scan_tokens().unwrap();
-        let mut parser = Parser::new(tokens);
-        match parser.parse() {
-            Ok(statements) => {
-                let resolved = Resolver::new(&mut interpreter).resolve(&statements);
-                match resolved {
-                    Ok(statements) => interpreter.interpret(&statements),
-                    Err(_) => println!("Resolver error")
-                }
+    match args.len() {
+        1 => {
+            let stdin = io::stdin();
+            if let Err(error) =
+                runner::repl(&mut stdin.lock(), &mut io::stdout(), &mut interpreter)
+            {
+                eprintln!("I/O error: {error}");
+                process::exit(74);
             }
-            Err(_) => println!("Parser error"),
+        }
+        2 => process::exit(runner::run_file(&mut interpreter, &args[1])),
+        _ => {
+            eprintln!("Usage: amfrustlox [script]");
+            process::exit(64);
         }
     }
 }

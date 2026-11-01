@@ -65,7 +65,7 @@ pub struct TokenIndex(pub usize);
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
-    line: usize,
+    pub line: usize,
     pub literal: Literal,
     pub idx: TokenIndex,
 }

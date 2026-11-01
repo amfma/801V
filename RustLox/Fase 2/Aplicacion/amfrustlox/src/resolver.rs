@@ -1,8 +1,7 @@
-use std::{collections::HashMap, hash::Hash};
+use std::collections::HashMap;
 
 use crate::{
-    callable::Class,
-    error::Error::{self, RuntimeError},
+    error::Error,
     interpreter::Interpreter,
     parser::{Expr, Stmt},
     token::Token,
@@ -72,7 +71,10 @@ impl<'a> Resolver<'a> {
 
         let last = self.scopes.last_mut().unwrap();
         if last.contains_key(&name.lexeme) {
-            Err(Error::RuntimeError)
+            Err(Error::resolve(
+                name,
+                "Already a variable with this name in this scope.",
+            ))
         } else {
             last.insert(name.lexeme.clone(), State::Declared);
             Ok(())
@@ -165,7 +167,10 @@ impl<'a> Resolver<'a> {
                 }
                 _ => {
                     if let FunctionType::Initializer = self.current_function {
-                        return Err(Error::RuntimeError);
+                        return Err(Error::resolve(
+                            keyword,
+                            "Can't return a value from an initializer.",
+                        ));
                     } else {
                         self.resolve_expression(value)?;
                     }
@@ -182,16 +187,25 @@ impl<'a> Resolver<'a> {
                 self.define(name);
 
                 if let Some(superclass_expr) = superclass {
-                    if let Expr::Variable { name:superclass_name } = superclass_expr {
+                    if let Expr::Variable {
+                        name: superclass_name,
+                    } = superclass_expr
+                    {
                         if name.lexeme == superclass_name.lexeme {
-                            return Err(Error::RuntimeError)
+                            return Err(Error::resolve(
+                                superclass_name,
+                                "A class can't inherit from itself.",
+                            ));
                         }
                     }
                     self.current_class = ClassType::Subclass;
                     self.resolve_expression(superclass_expr)?;
 
                     self.begin_scope();
-                    self.scopes.last_mut().unwrap().insert("super".to_string(), State::Defined);
+                    self.scopes
+                        .last_mut()
+                        .unwrap()
+                        .insert("super".to_string(), State::Defined);
                 }
 
                 self.begin_scope();
@@ -227,25 +241,28 @@ impl<'a> Resolver<'a> {
         match expr {
             Expr::Binary {
                 left_operand,
-                operator,
+                operator: _,
                 right_operand,
             } => {
                 self.resolve_expression(left_operand)?;
                 self.resolve_expression(right_operand)
             }
-            Expr::Numeric { value } => Ok(()),
-            Expr::String { value } => Ok(()),
+            Expr::Numeric { value: _ } => Ok(()),
+            Expr::String { value: _ } => Ok(()),
             Expr::Grouping { expr } => self.resolve_expression(expr),
             Expr::Nil => Ok(()),
-            Expr::Bool { value } => Ok(()),
+            Expr::Bool { value: _ } => Ok(()),
             Expr::Unary {
-                operator,
+                operator: _,
                 right_value,
             } => self.resolve_expression(right_value),
             Expr::Variable { name } => {
                 if let Some(last) = self.scopes.last() {
                     if let Some(State::Declared) = last.get(&name.lexeme) {
-                        return Err(Error::RuntimeError);
+                        return Err(Error::resolve(
+                            name,
+                            "Can't read local variable in its own initializer.",
+                        ));
                     }
                 }
 
@@ -259,7 +276,7 @@ impl<'a> Resolver<'a> {
             }
             Expr::Call {
                 callee,
-                paren,
+                paren: _,
                 arguments,
             } => {
                 self.resolve_expression(callee)?;
@@ -268,21 +285,34 @@ impl<'a> Resolver<'a> {
                 }
                 Ok(())
             }
-            Expr::Get { expr, name } => self.resolve_expression(expr),
-            Expr::Set { expr, name, value } => {
+            Expr::Get { expr, name: _ } => self.resolve_expression(expr),
+            Expr::Set {
+                expr,
+                name: _,
+                value,
+            } => {
                 self.resolve_expression(expr)?;
                 self.resolve_expression(value)
             }
             Expr::This { keyword } => {
                 if let ClassType::None = self.current_class {
-                    return Err(Error::RuntimeError);
+                    return Err(Error::resolve(
+                        keyword,
+                        "Can't use 'this' outside of a class.",
+                    ));
                 }
                 self.resolve_local(keyword);
                 Ok(())
             }
-            Expr::Super { keyword, method } => match self.current_class {
-                ClassType::None => Err(Error::RuntimeError),
-                ClassType::Class => Err(Error::RuntimeError),
+            Expr::Super { keyword, method: _ } => match self.current_class {
+                ClassType::None => Err(Error::resolve(
+                    keyword,
+                    "Can't use 'super' outside of a class.",
+                )),
+                ClassType::Class => Err(Error::resolve(
+                    keyword,
+                    "Can't use 'super' in a class with no superclass.",
+                )),
                 ClassType::Subclass => {
                     self.resolve_local(keyword);
                     Ok(())
@@ -292,5 +322,5 @@ impl<'a> Resolver<'a> {
     }
 }
 
-   #[cfg(test)]
-   mod tests;
+#[cfg(test)]
+mod tests;

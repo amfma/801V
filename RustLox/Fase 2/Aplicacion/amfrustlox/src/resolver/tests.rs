@@ -298,3 +298,155 @@ fn class_state_is_restored_after_a_class_declaration() {
     // `this` must be rejected again once the class body has been left.
     assert!(rejects("class A { m() { return this; } } print this;"));
 }
+
+/* =====================================================================
+   Diagnostics (line, location and message of resolver errors)
+   ===================================================================== */
+
+use crate::error::Diagnostic;
+
+fn resolve_error(src: &str) -> Diagnostic {
+    match resolve_src(src) {
+        Err(Error::Resolve(d)) => d,
+        Err(other) => panic!("expected a resolve error for `{src}`, got {other:?}"),
+        Ok(_) => panic!("`{src}` should not resolve"),
+    }
+}
+
+fn assert_resolve_error(src: &str, line: usize, location: &str, message: &str) {
+    let d = resolve_error(src);
+    assert_eq!(
+        (d.line, d.location.as_str(), d.message.as_str()),
+        (line, location, message),
+        "source: {src:?}"
+    );
+}
+
+#[test]
+fn duplicate_local_declaration_message() {
+    assert_resolve_error(
+        "{ var a = 1; var a = 2; }",
+        1,
+        " at 'a'",
+        "Already a variable with this name in this scope.",
+    );
+}
+
+#[test]
+fn duplicate_declaration_reports_the_second_occurrence_line() {
+    assert_resolve_error(
+        "{\n  var a = 1;\n  var a = 2;\n}",
+        3,
+        " at 'a'",
+        "Already a variable with this name in this scope.",
+    );
+}
+
+#[test]
+fn duplicate_parameter_message() {
+    assert_resolve_error(
+        "fun f(a, b, a) {}",
+        1,
+        " at 'a'",
+        "Already a variable with this name in this scope.",
+    );
+}
+
+#[test]
+fn reading_a_local_in_its_own_initializer_message() {
+    assert_resolve_error(
+        "{ var a = a; }",
+        1,
+        " at 'a'",
+        "Can't read local variable in its own initializer.",
+    );
+    assert_resolve_error(
+        "{\n  var total = 1 + total;\n}",
+        2,
+        " at 'total'",
+        "Can't read local variable in its own initializer.",
+    );
+}
+
+#[test]
+fn this_outside_a_class_message() {
+    assert_resolve_error(
+        "print this;",
+        1,
+        " at 'this'",
+        "Can't use 'this' outside of a class.",
+    );
+    assert_resolve_error(
+        "fun f() {\n  return this;\n}",
+        2,
+        " at 'this'",
+        "Can't use 'this' outside of a class.",
+    );
+}
+
+#[test]
+fn returning_a_value_from_an_initializer_message() {
+    assert_resolve_error(
+        "class A {\n  init() { return 1; }\n}",
+        2,
+        " at 'return'",
+        "Can't return a value from an initializer.",
+    );
+}
+
+#[test]
+fn inheriting_from_itself_message() {
+    assert_resolve_error(
+        "class A < A {}",
+        1,
+        " at 'A'",
+        "A class can't inherit from itself.",
+    );
+}
+
+#[test]
+fn super_outside_a_class_message() {
+    assert_resolve_error(
+        "print super.x;",
+        1,
+        " at 'super'",
+        "Can't use 'super' outside of a class.",
+    );
+}
+
+#[test]
+fn super_without_a_superclass_message() {
+    assert_resolve_error(
+        "class A {\n  m() { return super.m(); }\n}",
+        2,
+        " at 'super'",
+        "Can't use 'super' in a class with no superclass.",
+    );
+}
+
+#[test]
+fn resolver_errors_use_the_resolve_variant() {
+    assert!(matches!(resolve_src("print this;"), Err(Error::Resolve(_))));
+    assert!(matches!(
+        resolve_src("{ var a = 1; var a = 2; }"),
+        Err(Error::Resolve(_))
+    ));
+}
+
+#[test]
+fn resolver_diagnostic_display_is_lox_style() {
+    assert_eq!(
+        resolve_error("print this;").to_string(),
+        "[line 1] Error at 'this': Can't use 'this' outside of a class."
+    );
+}
+
+#[test]
+fn the_first_resolver_error_wins() {
+    assert_resolve_error(
+        "print this;\nprint super.x;",
+        1,
+        " at 'this'",
+        "Can't use 'this' outside of a class.",
+    );
+}

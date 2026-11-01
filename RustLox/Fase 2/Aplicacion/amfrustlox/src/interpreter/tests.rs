@@ -192,14 +192,22 @@ fn state_persists_between_runs_like_a_repl() {
 }
 
 #[test]
-fn interpret_keeps_going_after_a_runtime_error() {
+fn interpret_returns_ok_when_everything_succeeds() {
+    let (mut interpreter, _) = new_interpreter();
+    let statements = parse_and_resolve(&mut interpreter, "var a = 1; a = a + 1;");
+    assert!(interpreter.interpret(&statements).is_ok());
+    assert_eq!(global(&interpreter, "a"), Some(num(2.0)));
+}
+
+#[test]
+fn interpret_stops_at_the_first_runtime_error() {
     let (mut interpreter, _) = new_interpreter();
     let statements =
         parse_and_resolve(&mut interpreter, "var a = 1; var b = missing; var c = 3;");
-    interpreter.interpret(&statements);
+    assert!(interpreter.interpret(&statements).is_err());
     assert_eq!(global(&interpreter, "a"), Some(num(1.0)));
     assert_eq!(global(&interpreter, "b"), None);
-    assert_eq!(global(&interpreter, "c"), Some(num(3.0)));
+    assert_eq!(global(&interpreter, "c"), None);
 }
 
 #[test]
@@ -1040,4 +1048,119 @@ fn super_with_a_missing_method_is_a_runtime_error() {
         class B < A { m() { return super.missing(); } }
         B().m();
     "#));
+}
+
+/* =====================================================================
+   print -> injected stdout
+   ===================================================================== */
+
+/// Runs `src` (ignoring any runtime error) and returns what was printed.
+fn printed(src: &str) -> String {
+    let (mut interpreter, buffer) = new_interpreter();
+    let _ = try_run_in(&mut interpreter, src);
+    let bytes = buffer.borrow().clone();
+    String::from_utf8(bytes).expect("output should be utf-8")
+}
+
+#[test]
+fn print_writes_a_value_and_newline() {
+    assert_eq!(printed("print 1;"), "1
+");
+    assert_eq!(printed("print \"hi\";"), "hi\n");
+    assert_eq!(printed("print true;"), "true\n");
+    assert_eq!(printed("print nil;"), "nil\n");
+    assert_eq!(printed("print 2.5;"), "2.5\n");
+}
+
+#[test]
+fn print_evaluates_expressions() {
+    assert_eq!(printed("print 1 + 2 * 3;"), "7\n");
+    assert_eq!(printed("print \"a\" + \"b\";"), "ab\n");
+    assert_eq!(printed("var a = 4; print a / 2;"), "2\n");
+}
+
+#[test]
+fn prints_appear_in_execution_order() {
+    assert_eq!(printed("print 1; print 2; print 3;"), "1\n2\n3\n");
+}
+
+#[test]
+fn print_inside_loops_and_functions() {
+    assert_eq!(
+        printed("for (var i = 0; i < 3; i = i + 1) print i;"),
+        "0\n1\n2\n"
+    );
+    assert_eq!(printed("fun f(x) { print x; } f(\"in f\"); f(2);"), "in f\n2\n");
+}
+
+#[test]
+fn print_formats_callables_and_instances() {
+    assert_eq!(printed("fun f() {} print f;"), "<Function f>\n");
+    assert_eq!(printed("class A {} print A;"), "<Class A>\n");
+    assert_eq!(printed("class A {} print A();"), "Instance A.class\n");
+    assert_eq!(printed("print clock;"), "<Function clock>\n");
+}
+
+#[test]
+fn print_of_a_failing_expression_writes_nothing() {
+    assert_eq!(printed("print 1 / 0;"), "");
+    assert_eq!(printed("print missing;"), "");
+}
+
+#[test]
+fn output_before_a_runtime_error_is_kept() {
+    assert_eq!(printed("print 1; print 1 / 0; print 2;"), "1\n");
+}
+
+#[test]
+fn expression_statements_print_nothing() {
+    assert_eq!(printed("1 + 2; var a = 3; a = 4;"), "");
+}
+
+/* =====================================================================
+   stderr writer
+   ===================================================================== */
+
+fn interpreter_with_streams() -> (Interpreter, Rc<RefCell<Vec<u8>>>, Rc<RefCell<Vec<u8>>>) {
+    let out = Rc::new(RefCell::new(Vec::<u8>::new()));
+    let err = Rc::new(RefCell::new(Vec::<u8>::new()));
+    let out_sink: Rc<RefCell<dyn Write>> = out.clone();
+    let err_sink: Rc<RefCell<dyn Write>> = err.clone();
+    (Interpreter::with_streams(out_sink, err_sink), out, err)
+}
+
+fn contents(buffer: &Rc<RefCell<Vec<u8>>>) -> String {
+    String::from_utf8(buffer.borrow().clone()).unwrap()
+}
+
+#[test]
+fn report_error_writes_a_line_to_the_stderr_writer_only() {
+    let (interpreter, out, err) = interpreter_with_streams();
+    interpreter.report_error("something went wrong");
+    assert_eq!(contents(&err), "something went wrong\n");
+    assert_eq!(contents(&out), "");
+}
+
+#[test]
+fn report_error_appends() {
+    let (interpreter, _, err) = interpreter_with_streams();
+    interpreter.report_error("one");
+    interpreter.report_error("two");
+    assert_eq!(contents(&err), "one\ntwo\n");
+}
+
+#[test]
+fn print_goes_to_stdout_not_stderr() {
+    let (mut interpreter, out, err) = interpreter_with_streams();
+    assert!(try_run_in(&mut interpreter, "print 1;").is_ok());
+    assert_eq!(contents(&out), "1\n");
+    assert_eq!(contents(&err), "");
+}
+
+#[test]
+fn new_keeps_diagnostics_out_of_the_stdout_writer() {
+    // `new` sends diagnostics to the process stderr, never to the given stdout.
+    let (interpreter, buffer) = new_interpreter();
+    interpreter.report_error("diagnostic");
+    assert!(buffer.borrow().is_empty());
 }

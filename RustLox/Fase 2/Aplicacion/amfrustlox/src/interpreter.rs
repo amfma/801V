@@ -27,6 +27,7 @@ pub struct Interpreter {
     enviroment: Rc<RefCell<Enviroment>>,
     globals: Rc<RefCell<Enviroment>>,
     stdout: Rc<RefCell<dyn Write>>,
+    stderr: Rc<RefCell<dyn Write>>,
     locals: HashMap<TokenIndex, usize>,
 }
 
@@ -80,6 +81,10 @@ impl std::fmt::Display for Value {
 
 impl Interpreter {
     pub fn new(stdout: Rc<RefCell<dyn Write>>) -> Self {
+        Self::with_streams(stdout, Rc::new(RefCell::new(std::io::stderr())))
+    }
+
+    pub fn with_streams(stdout: Rc<RefCell<dyn Write>>, stderr: Rc<RefCell<dyn Write>>) -> Self {
         let globals = Rc::new(RefCell::new(Enviroment::new(None)));
 
         let clock: BoxedFunction = Box::new(|_| {
@@ -98,6 +103,7 @@ impl Interpreter {
             enviroment: globals.clone(),
             globals: globals,
             stdout,
+            stderr,
         }
     }
 
@@ -108,8 +114,9 @@ impl Interpreter {
             }
             Stmt::Print { expr } => {
                 let value = self.evaluate_expression(expr)?;
-                println!("{}", value);
+                writeln!(self.stdout.borrow_mut(), "{}", value).map_err(|_| Error::RuntimeError)?;
             }
+
             Stmt::Var { name, initializar } => {
                 let value = match initializar {
                     Some(value) => self.evaluate_expression(value)?,
@@ -459,10 +466,15 @@ impl Interpreter {
         self.locals.insert(token.idx, depth);
     }
 
-    pub fn interpret(&mut self, statements: &Vec<Stmt>) {
+    pub fn report_error(&self, message: &str) {
+        let _ = writeln!(self.stderr.borrow_mut(), "{message}");
+    }
+
+    pub fn interpret(&mut self, statements: &Vec<Stmt>) -> Result<(), Error> {
         for statement in statements {
-            self.execute_statement(statement);
+            self.execute_statement(statement)?;
         }
+        Ok(())
     }
 }
 

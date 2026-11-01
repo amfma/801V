@@ -911,3 +911,185 @@ fn for_loop_without_condition_loops_forever_by_default() {
         other => panic!("expected while, got {other:?}"),
     }
 }
+
+/* =====================================================================
+   Diagnostics (line, location and message of syntax errors)
+   ===================================================================== */
+
+use crate::error::Diagnostic;
+
+fn syntax_error(src: &str) -> Diagnostic {
+    match parser_for(src).parse() {
+        Err(Error::Syntax(d)) => d,
+        Err(other) => panic!("expected a syntax error for `{src}`, got {other:?}"),
+        Ok(_) => panic!("`{src}` should not parse"),
+    }
+}
+
+fn assert_syntax_error(src: &str, line: usize, location: &str, message: &str) {
+    let d = syntax_error(src);
+    assert_eq!(
+        (d.line, d.location.as_str(), d.message.as_str()),
+        (line, location, message),
+        "source: {src:?}"
+    );
+}
+
+#[test]
+fn diagnostic_display_is_lox_style() {
+    assert_eq!(
+        syntax_error("print 1").to_string(),
+        "[line 1] Error at end: Expect ';' after value."
+    );
+}
+
+#[test]
+fn errors_at_end_of_input_say_at_end() {
+    assert_syntax_error("print 1", 1, " at end", "Expect ';' after value.");
+    assert_syntax_error("1 + 2", 1, " at end", "Expect ';' after expression.");
+    assert_syntax_error("var a = 1", 1, " at end", "Expect ';' after variable declaration.");
+    assert_syntax_error("return 1", 1, " at end", "Expect ';' after return value.");
+    assert_syntax_error("{ print 1;", 1, " at end", "Expect '}' after block.");
+}
+
+#[test]
+fn errors_name_the_offending_token() {
+    assert_syntax_error("print 1 2;", 1, " at '2'", "Expect ';' after value.");
+    assert_syntax_error("var = 1;", 1, " at '='", "Expect variable name.");
+}
+
+#[test]
+fn missing_expressions() {
+    assert_syntax_error("print ;", 1, " at ';'", "Expect expression.");
+    assert_syntax_error("var a = ;", 1, " at ';'", "Expect expression.");
+    assert_syntax_error("*", 1, " at '*'", "Expect expression.");
+    assert_syntax_error("1 + ;", 1, " at ';'", "Expect expression.");
+}
+
+#[test]
+fn grouping_and_call_errors() {
+    assert_syntax_error("(1", 1, " at end", "Expect ')' after expression.");
+    assert_syntax_error("f(1", 1, " at end", "Expect ')' after arguments.");
+    assert_syntax_error("a.", 1, " at end", "Expect property name after '.'.");
+    assert_syntax_error("super", 1, " at end", "Expect '.' after 'super'.");
+    assert_syntax_error("super.", 1, " at end", "Expect superclass method name.");
+}
+
+#[test]
+fn invalid_assignment_target_points_at_the_equals_sign() {
+    assert_syntax_error("1 = 2;", 1, " at '='", "Invalid assignment target.");
+    assert_syntax_error("a + b = 1;", 1, " at '='", "Invalid assignment target.");
+    assert_syntax_error("(a) = 1;", 1, " at '='", "Invalid assignment target.");
+}
+
+#[test]
+fn control_flow_errors() {
+    assert_syntax_error("if true) print 1;", 1, " at 'true'", "Expect '(' after 'if'.");
+    assert_syntax_error("if (true print 1;", 1, " at 'print'", "Expect ')' after if condition.");
+    assert_syntax_error("while true) {}", 1, " at 'true'", "Expect '(' after 'while'.");
+    assert_syntax_error("while (true print 1;", 1, " at 'print'", "Expect ')' after condition.");
+    assert_syntax_error("for var i;", 1, " at 'var'", "Expect '(' after 'for'.");
+    assert_syntax_error(
+        "for (var i = 0; i < 3 i = i + 1) {}",
+        1,
+        " at 'i'",
+        "Expect ';' after loop condition.",
+    );
+    assert_syntax_error(
+        "for (var i = 0; i < 3; i = i + 1 print i;",
+        1,
+        " at 'print'",
+        "Expect ')' after for clauses.",
+    );
+}
+
+#[test]
+fn function_errors_mention_function() {
+    assert_syntax_error("fun () {}", 1, " at '('", "Expect function name.");
+    assert_syntax_error("fun f {}", 1, " at '{'", "Expect '(' after function name.");
+    assert_syntax_error("fun f(1) {}", 1, " at '1'", "Expect parameter name.");
+    assert_syntax_error("fun f(a b) {}", 1, " at 'b'", "Expect ')' after parameters.");
+    assert_syntax_error("fun f(a) print 1;", 1, " at 'print'", "Expect '{' before function body.");
+}
+
+#[test]
+fn method_errors_mention_method() {
+    assert_syntax_error("class A { 1() {} }", 1, " at '1'", "Expect method name.");
+    assert_syntax_error("class A { m {} }", 1, " at '{'", "Expect '(' after method name.");
+    assert_syntax_error("class A { m() print 1; }", 1, " at 'print'", "Expect '{' before method body.");
+}
+
+#[test]
+fn class_errors() {
+    assert_syntax_error("class { }", 1, " at '{'", "Expect class name.");
+    assert_syntax_error("class A < { }", 1, " at '{'", "Expect superclass name.");
+    assert_syntax_error("class A", 1, " at end", "Expect '{' before class body.");
+    assert_syntax_error("class A {", 1, " at end", "Expect '}' after class body.");
+}
+
+#[test]
+fn error_line_numbers_follow_the_source() {
+    assert_syntax_error("var a = 1;\nvar b = ;", 2, " at ';'", "Expect expression.");
+    assert_syntax_error(
+        "print 1\nprint 2;",
+        2,
+        " at 'print'",
+        "Expect ';' after value.",
+    );
+    assert_syntax_error("\n\n\nvar = 1;", 4, " at '='", "Expect variable name.");
+}
+
+#[test]
+fn only_the_first_error_is_reported() {
+    // Both statements are broken; the parser stops at the first one.
+    assert_syntax_error("print ;\nprint ;", 1, " at ';'", "Expect expression.");
+}
+
+#[test]
+fn syntax_errors_are_never_reported_as_other_variants() {
+    assert!(matches!(
+        parser_for("print 1").parse(),
+        Err(Error::Syntax(_))
+    ));
+    assert!(matches!(
+        parser_for("1 = 2;").parse(),
+        Err(Error::Syntax(_))
+    ));
+}
+
+/* ---------- 255 argument / parameter limit ---------- */
+
+fn call_with_args(n: usize) -> String {
+    format!("f({});", vec!["1"; n].join(", "))
+}
+
+fn function_with_params(n: usize) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("p{i}")).collect();
+    format!("fun f({}) {{}}", params.join(", "))
+}
+
+#[test]
+fn up_to_255_arguments_are_accepted() {
+    assert!(!program_fails(&call_with_args(0)));
+    assert!(!program_fails(&call_with_args(254)));
+    assert!(!program_fails(&call_with_args(255)));
+}
+
+#[test]
+fn more_than_255_arguments_are_rejected_with_a_message() {
+    let d = syntax_error(&call_with_args(256));
+    assert_eq!(d.message, "Can't have more than 255 arguments.");
+    assert_eq!(d.line, 1);
+}
+
+#[test]
+fn up_to_255_parameters_are_accepted() {
+    assert!(!program_fails(&function_with_params(254)));
+    assert!(!program_fails(&function_with_params(255)));
+}
+
+#[test]
+fn more_than_255_parameters_are_rejected_with_a_message() {
+    let d = syntax_error(&function_with_params(256));
+    assert_eq!(d.message, "Can't have more than 255 parameters.");
+}
