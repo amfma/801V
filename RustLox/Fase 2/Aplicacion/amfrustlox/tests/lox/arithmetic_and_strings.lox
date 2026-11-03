@@ -1,0 +1,13 @@
+print 1 + 2 * 3; // expect: 7
+print (1 + 2) * 3; // expect: 9
+print 10 / 4; // expect: 2.5
+print -3 + 1; // expect: -2
+print "foo" + "bar"; // expect: foobar
+print "a" < "b"; // expect: true
+print 1 == 1; // expect: true
+print 1 == "1"; // expect: false
+print nil == false; // expect: false
+print !nil; // expect: true
+print nil or "fallback"; // expect: fallback
+print 1 and 2; // expect: 2
+print false and 2; // expect: false

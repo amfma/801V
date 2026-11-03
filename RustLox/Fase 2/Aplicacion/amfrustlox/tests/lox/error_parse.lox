@@ -1,0 +1,4 @@
+print "never runs";
+var = 2;
+// expect error: parse
+// expect diagnostic: [line 2] Error at '=': Expect variable name.

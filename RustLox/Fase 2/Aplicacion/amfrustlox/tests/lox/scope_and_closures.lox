@@ -1,0 +1,30 @@
+// A closure must keep seeing the binding it was created with,
+// even if a later declaration shadows the name in the same block.
+var a = "global";
+{
+  fun show() { print a; }
+  show(); // expect: global
+  var a = "block";
+  show(); // expect: global
+}
+
+fun makeCounter() {
+  var i = 0;
+  fun count() {
+    i = i + 1;
+    return i;
+  }
+  return count;
+}
+
+var first = makeCounter();
+var second = makeCounter();
+print first(); // expect: 1
+print first(); // expect: 2
+print second(); // expect: 1
+
+fun fib(n) {
+  if (n < 2) return n;
+  return fib(n - 1) + fib(n - 2);
+}
+print fib(15); // expect: 610

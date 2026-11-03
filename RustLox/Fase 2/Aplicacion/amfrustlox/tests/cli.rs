@@ -32,7 +32,11 @@ fn runtime_error_exits_with_70() {
     assert_eq!(out.status.code(), Some(70));
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "before\n");
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(stderr, "[line 2] Runtime error: Division by zero.\n");
+    // Operator errors carry a column and echo the source line with a caret.
+    assert_eq!(
+        stderr,
+        "[line 2:9] Runtime error: Division by zero.\n  print 1 / 0;\n          ^\n"
+    );
 }
 
 #[test]
@@ -113,7 +117,10 @@ fn repl_survives_errors() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stdout.contains('5'));
     assert!(!stdout.contains("Division"), "diagnostics must not reach stdout");
-    assert_eq!(stderr, "[line 1] Runtime error: Division by zero.\n");
+    assert_eq!(
+        stderr,
+        "[line 1:9] Runtime error: Division by zero.\n  print 1 / 0;\n          ^\n"
+    );
 }
 
 #[test]

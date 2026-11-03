@@ -1,0 +1,26 @@
+class Counter {
+  init(start) {
+    this.count = start;
+  }
+
+  increment() {
+    this.count = this.count + 1;
+    return this;
+  }
+}
+
+var c = Counter(10);
+print c.increment().increment().count; // expect: 12
+
+// A method taken off an instance stays bound to it.
+var inc = c.increment;
+inc();
+print c.count; // expect: 13
+
+// Calling init directly returns the instance.
+print c.init(1).count; // expect: 1
+
+// Fields can hold functions.
+fun hello() { return "hi"; }
+c.greet = hello;
+print c.greet(); // expect: hi

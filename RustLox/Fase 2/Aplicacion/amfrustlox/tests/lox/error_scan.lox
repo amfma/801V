@@ -1,0 +1,3 @@
+print @;
+// expect error: scan
+// expect diagnostic: [line 1] Error: Unexpected character '@'.

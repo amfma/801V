@@ -1,0 +1,5 @@
+print "before";
+print nope;
+// expect: before
+// expect error: runtime
+// expect diagnostic: [line 2] Runtime error: Undefined variable 'nope'.

@@ -1,0 +1,29 @@
+class Animal {
+  init(name) {
+    this.name = name;
+  }
+
+  speak() {
+    return this.name + " makes a sound";
+  }
+
+  kind() {
+    return "animal";
+  }
+}
+
+class Dog < Animal {
+  init(name) {
+    super.init(name);
+    this.tricks = 0;
+  }
+
+  speak() {
+    return super.speak() + " (woof)";
+  }
+}
+
+var d = Dog("Rex");
+print d.speak(); // expect: Rex makes a sound (woof)
+print d.kind(); // expect: animal
+print d.tricks; // expect: 0

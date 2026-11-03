@@ -1,0 +1,6 @@
+{
+  var a = 1;
+  var a = 2;
+}
+// expect error: resolve
+// expect diagnostic: [line 3] Error at 'a': Already a variable with this name in this scope.

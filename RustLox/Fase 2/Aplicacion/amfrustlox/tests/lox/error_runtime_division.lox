@@ -1,0 +1,7 @@
+print "before";
+print 1 / 0;
+// expect: before
+// expect error: runtime
+// expect diagnostic: [line 2:9] Runtime error: Division by zero.
+// expect diagnostic:   print 1 / 0;
+// expect diagnostic:           ^
