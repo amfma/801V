@@ -17,4 +17,4 @@ target
 rustc-ice-*.txt
 
 #Benchmarking clone of jlox
-/craftinginterpreters/
+craftinginterpreters/
