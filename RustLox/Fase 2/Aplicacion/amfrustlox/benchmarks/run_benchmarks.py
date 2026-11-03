@@ -15,7 +15,7 @@ Typical use (from the amfrustlox directory):
 
     # first time: build jlox from a clone of munificent/craftinginterpreters and
     # save its numbers so later runs don't need Java at all
-    python benchmarks/run_benchmarks.py --jlox-src ../craftinginterpreters --save benchmarks/baseline.json
+    python benchmarks/run_benchmarks.py --jlox-src craftinginterpreters --save benchmarks/baseline.json
 
     # while optimising: re-run only amfrustlox against the saved jlox numbers
     python benchmarks/run_benchmarks.py --jlox-from benchmarks/baseline.json
@@ -26,7 +26,6 @@ Only the Python standard library is needed.
 import argparse
 import json
 import math
-import re
 import shutil
 import statistics
 import subprocess
@@ -70,85 +69,30 @@ def rust_binary(explicit):
     return path
 
 
-def parse_java_major(text):
-    """Major version from `java -version` output ('1.8.0_391' -> 8, '21.0.2' -> 21)."""
-    match = re.search(r'version "([^"]+)"', text)
-    if not match:
-        return None
-    parts = match.group(1).split(".")
-    first = parts[1] if parts[0] == "1" and len(parts) > 1 else parts[0]
-    digits = re.match(r"\d+", first)
-    return int(digits.group()) if digits else None
-
-
-def java_major(java):
-    """Major version of the `java` that will run jlox, or None if unknown."""
-    try:
-        proc = subprocess.run([java, "-version"], capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return parse_java_major(proc.stdout + proc.stderr)
-
-
-def compile_jlox(src, java=None):
+def compile_jlox(src):
     """Compile jlox from a craftinginterpreters clone (or its `java` folder)."""
     src = Path(src)
-    if not src.is_dir():
-        die(
-            f"--jlox-src folder does not exist: {src.resolve()}\n"
-            "Paths are relative to the folder you run the command from "
-            f"({Path.cwd()}). Pass the folder where you cloned craftinginterpreters."
-        )
     for base in (src / "java", src):
         java_dir = base / "com" / "craftinginterpreters" / "lox"
         if java_dir.is_dir():
             break
     else:
-        die(
-            f"{src.resolve()} exists but has no java/com/craftinginterpreters/lox "
-            "folder inside. Is it a full clone of munificent/craftinginterpreters?"
-        )
+        die(f"no com/craftinginterpreters/lox folder found under {src}")
     javac = shutil.which("javac")
     if javac is None:
         die("javac not found on PATH (a JDK is needed to compile jlox)")
     out = BUILD_DIR / "jlox"
     out.mkdir(parents=True, exist_ok=True)
-    sources = [str(p) for p in sorted(java_dir.glob("*.java"))]
-
-    # `java` and `javac` on PATH can come from different JDK installs. Class files
-    # built by a newer javac do not load on an older java (UnsupportedClassVersionError),
-    # so target the version of the `java` that will actually run them.
-    java = java or shutil.which("java")
-    runtime = java_major(java) if java else None
-    attempts = [["--release", str(runtime)]] if runtime and runtime >= 8 else []
-    attempts.append([])  # plain compile, e.g. javac 8 does not know --release
-
     print(f"Compiling jlox from {java_dir} ...", file=sys.stderr)
-    for extra in attempts:
-        proc = subprocess.run(
-            [javac, *extra, "-d", str(out), *sources], capture_output=True, text=True
-        )
-        if proc.returncode == 0:
-            target = f" for Java {extra[1]}" if extra else ""
-            print(f"  compiled{target} (runtime: Java {runtime or 'unknown'})", file=sys.stderr)
-            return out
-    print(proc.stderr, file=sys.stderr)
-    die("javac failed (see above)")
+    sources = [str(p) for p in sorted(java_dir.glob("*.java"))]
+    subprocess.run([javac, "-d", str(out), *sources], check=True)
+    return out
 
 
-def jlox_command(classes_dir, java=None):
-    java = java or shutil.which("java")
+def jlox_command(classes_dir):
+    java = shutil.which("java")
     if java is None:
         die("java not found on PATH")
-    major = java_major(java)
-    print(f"jlox will run on: {java} (Java {major or 'unknown'})", file=sys.stderr)
-    if major is not None and major < 17:
-        print(
-            f"warning: Java {major} is usually noticeably slower than a current JVM, which\n"
-            "         can make jlox look slower than it normally is and flatter amfrustlox\n"
-            "         in the comparison. Prefer a recent JDK (see --java).",
-            file=sys.stderr,
-        )
     return [java, "-cp", str(classes_dir), "com.craftinginterpreters.lox.Lox"]
 
 
@@ -168,37 +112,18 @@ def run_once(command, name, timeout):
     except subprocess.TimeoutExpired:
         return None, f"timed out after {timeout}s"
     if proc.returncode != 0:
-        if "UnsupportedClassVersionError" in proc.stderr:
-            return None, (
-                "the `java` on your PATH is older than the `javac` that compiled jlox "
-                "(UnsupportedClassVersionError). Compare `java -version` and `javac -version`"
-            )
-        # The first stderr line is the actual message; the last is just a stack frame.
-        lines = [
-            line.strip()
-            for line in proc.stderr.splitlines()
-            if line.strip() and not line.startswith("Picked up")
-        ]
-        return None, f"exit code {proc.returncode}: {(lines[:1] or [''])[0][:200]}"
+        detail = proc.stderr.strip().splitlines()[-1:] or [""]
+        return None, f"exit code {proc.returncode}: {detail[0][:120]}"
 
     lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
     try:
         if name in THROUGHPUT:
-            value = float(lines[-2])  # batch count precedes the elapsed time
-        elif "elapsed" in lines:
-            # equality / string_equality: the LAST line is `elapsed - loopTime`
-            # (a difference that can be ~0 or negative), so use the total time
-            # that follows the "elapsed" label instead.
-            value = float(lines[lines.index("elapsed") + 1])
-        else:
-            value = float(lines[-1])  # elapsed seconds printed by the program
+            return float(lines[-2]), None  # batch count precedes the elapsed time
+        return float(lines[-1]), None  # elapsed seconds printed by the program
     except (IndexError, ValueError):
         if name in THROUGHPUT:
             return None, "could not read the batch count from the output"
         return wall, None  # fall back to wall-clock time
-    if value <= 0:
-        return None, f"got a non-positive result ({value}); cannot compare"
-    return value, None
 
 
 def measure(label, command, names, runs, timeout):
@@ -273,8 +198,6 @@ def main():
     parser.add_argument("--rust-bin", help="path to the amfrustlox binary (default target/release/amfrustlox)")
     parser.add_argument("--jlox-src", help="path to a munificent/craftinginterpreters clone; jlox is compiled from it")
     parser.add_argument("--jlox-classes", help="directory with already compiled jlox classes")
-    parser.add_argument("--java", help="java executable used to run jlox (default: `java` on PATH), "
-                        r'e.g. "C:\Program Files\Java\jdk-24\bin\java.exe"')
     parser.add_argument("--jlox-from", help="reuse jlox numbers from a file written by --save (no Java needed)")
     parser.add_argument("--save", help="write all measurements to this JSON file")
     parser.add_argument("--strict", action="store_true", help="exit with status 1 if any benchmark misses the 10%% goal")
@@ -297,11 +220,11 @@ def main():
         if args.jlox_classes:
             classes = Path(args.jlox_classes)
         elif args.jlox_src:
-            classes = compile_jlox(args.jlox_src, args.java)
+            classes = compile_jlox(args.jlox_src)
         else:
             die("need a jlox source: --jlox-src, --jlox-classes or --jlox-from (see --help)")
         print("Running jlox...", file=sys.stderr)
-        jlox = measure("jlox", jlox_command(classes, args.java), names, args.runs, args.timeout)
+        jlox = measure("jlox", jlox_command(classes), names, args.runs, args.timeout)
 
     print("Running amfrustlox...", file=sys.stderr)
     rust = measure("rust", rust_cmd, names, args.runs, args.timeout)
