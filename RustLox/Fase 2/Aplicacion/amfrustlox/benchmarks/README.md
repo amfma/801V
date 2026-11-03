@@ -27,16 +27,24 @@ repository ([munificent/craftinginterpreters](https://github.com/munificent/craf
 
 Every program prints its own elapsed time as its last line, measured with
 `clock()`. The runner uses that number, so JVM start-up and process spawning
-are not counted.
+are not counted. The exceptions are `equality` and `string_equality`, whose last
+line is `elapsed - loopTime` (a difference that can be near zero or negative);
+for those the runner uses the total time printed after the `elapsed` label.
+A run that produces a non-positive time is reported as failed, never as a pass.
 
 ## Usage
 
 Run everything from the `amfrustlox` directory.
 
 ```sh
-# 1. First time: compile jlox from a clone of the book's repo and save its numbers
+# 1. First time: compile jlox from a clone of the book's repo and save its numbers.
+#    Clone it OUTSIDE this git repository (here: next to the project folder), then
+#    point --jlox-src at wherever it ended up. The path is relative to the folder
+#    you run the command from.
 git clone --depth 1 https://github.com/munificent/craftinginterpreters ../craftinginterpreters
 python benchmarks/run_benchmarks.py --jlox-src ../craftinginterpreters --save benchmarks/baseline.json
+# (if you cloned inside amfrustlox instead, use --jlox-src craftinginterpreters
+#  and add that folder to .gitignore, since it is a repository of its own)
 
 # 2. While optimising: only amfrustlox is re-run; jlox numbers come from the file
 python benchmarks/run_benchmarks.py --jlox-from benchmarks/baseline.json
@@ -48,6 +56,21 @@ python benchmarks/run_benchmarks.py --jlox-from benchmarks/baseline.json --stric
 
 Other options: `--no-build` (skip `cargo build --release`), `--rust-bin PATH`,
 `--jlox-classes DIR` (already compiled jlox), `--timeout SECONDS`. See `--help`.
+
+### Which Java runs jlox
+
+By default the `java` found on PATH is used, and jlox is compiled for exactly
+that version, so a `javac` newer than `java` still works. But **the Java version
+changes jlox's speed**, so use a recent JDK for the comparison. On Windows
+`java` and `javac` often come from different installs (for example an old
+Java 8 `java` next to a new JDK's `javac`). Pick the JDK's own `java` explicitly:
+
+```
+python benchmarks/run_benchmarks.py --jlox-src craftinginterpreters --java "C:\Program Files\Java\jdk-24\bin\java.exe" --save benchmarks/baseline.json
+```
+
+The runner prints which `java` and version it used. Mention that version when
+you report results, e.g. "jlox on OpenJDK 24".
 Each benchmark runs 3 times by default and the **median** is used.
 
 ## Reading the output
