@@ -99,12 +99,12 @@ fn run_source_reports_runtime_errors() {
     assert_eq!(run_source(&mut interpreter, "var a = 1; a();"), Err(RunError::Runtime));
 }
 
-/// Documents CURRENT behaviour: the resolver accepts a top-level `return`,
-/// which then surfaces as a runtime error.
+/// The resolver rejects a top-level `return` before anything runs.
 #[test]
-fn top_level_return_is_a_runtime_error() {
+fn top_level_return_is_a_resolve_error() {
     let (mut interpreter, _) = new_interpreter();
-    assert_eq!(run_source(&mut interpreter, "return 1;"), Err(RunError::Runtime));
+    assert_eq!(run_source(&mut interpreter, "return 1;"), Err(RunError::Resolve));
+    assert_eq!(run_source(&mut interpreter, "return;"), Err(RunError::Resolve));
 }
 
 #[test]
@@ -219,7 +219,12 @@ fn runtime_errors_are_written_to_stderr_not_stdout() {
     let c = run_captured_streams("print 1; print 1 / 0;");
     assert_eq!(c.result, Err(RunError::Runtime));
     assert_eq!(c.stdout, "1\n");
-    assert_eq!(c.stderr, "[line 1] Runtime error: Division by zero.\n");
+    assert_eq!(
+        c.stderr,
+        "[line 1:18] Runtime error: Division by zero.\n\
+         \x20 print 1; print 1 / 0;\n\
+         \x20                  ^\n"
+    );
 }
 
 #[test]
@@ -233,14 +238,24 @@ fn runtime_error_line_numbers_are_reported() {
 fn runtime_error_inside_a_function_reports_the_line_where_it_happens() {
     let c = run_captured_streams("fun f() {\n  return 1 / 0;\n}\nf();");
     assert_eq!(c.result, Err(RunError::Runtime));
-    assert_eq!(c.stderr, "[line 2] Runtime error: Division by zero.\n");
+    assert_eq!(
+        c.stderr,
+        "[line 2:12] Runtime error: Division by zero.\n\
+         \x20   return 1 / 0;\n\
+         \x20            ^\n"
+    );
 }
 
 #[test]
-fn top_level_return_is_reported_without_a_line() {
-    let c = run_captured_streams("return 1;");
-    assert_eq!(c.result, Err(RunError::Runtime));
-    assert_eq!(c.stderr, "Can't return from top-level code.\n");
+fn top_level_return_is_reported_with_its_line() {
+    let c = run_captured_streams("print 1;\nreturn 1;");
+    assert_eq!(c.result, Err(RunError::Resolve));
+    // Rejected before running, so the earlier `print` never executes.
+    assert_eq!(c.stdout, "");
+    assert_eq!(
+        c.stderr,
+        "[line 2] Error at 'return': Can't return from top-level code.\n"
+    );
 }
 
 #[test]
@@ -262,7 +277,9 @@ fn diagnostics_accumulate_across_runs_on_one_interpreter() {
         text(&err),
         "[line 1] Error at end: Expect ';' after value.\n\
          [line 1] Error at 'this': Can't use 'this' outside of a class.\n\
-         [line 1] Runtime error: Division by zero.\n"
+         [line 1:9] Runtime error: Division by zero.\n\
+         \x20 print 1 / 0;\n\
+         \x20         ^\n"
     );
     assert_eq!(text(&out), "2\n");
 }
@@ -403,7 +420,12 @@ fn run_file_runtime_error_returns_70_and_reports_it() {
     let (mut interpreter, out, err) = new_streams();
     assert_eq!(run_file(&mut interpreter, path.to_str().unwrap()), 70);
     assert_eq!(text(&out), "1\n");
-    assert_eq!(text(&err), "[line 2] Runtime error: Division by zero.\n");
+    assert_eq!(
+        text(&err),
+        "[line 2:9] Runtime error: Division by zero.\n\
+         \x20 print 1 / 0;\n\
+         \x20         ^\n"
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -411,4 +433,151 @@ fn run_file_runtime_error_returns_70_and_reports_it() {
 fn run_file_missing_file_returns_74() {
     let (mut interpreter, _) = new_interpreter();
     assert_eq!(run_file(&mut interpreter, "/definitely/not/here.lox"), 74);
+}
+
+/* =====================================================================
+   Multiple diagnostics per run (scanner and parser recovery)
+   ===================================================================== */
+
+#[test]
+fn every_parse_error_is_written_to_stderr() {
+    let c = run_captured_streams("var = 1;\nprint ;\nprint 2");
+    assert_eq!(c.result, Err(RunError::Parse));
+    assert_eq!(c.stdout, "");
+    assert_eq!(
+        c.stderr,
+        "[line 1] Error at '=': Expect variable name.\n\
+         [line 2] Error at ';': Expect expression.\n\
+         [line 3] Error at end: Expect ';' after value.\n"
+    );
+}
+
+#[test]
+fn every_scan_error_is_written_to_stderr() {
+    let c = run_captured_streams("print 1 @;\nvar s = \"oops");
+    assert_eq!(c.result, Err(RunError::Scan));
+    assert_eq!(c.stdout, "");
+    assert_eq!(
+        c.stderr,
+        "[line 1] Error: Unexpected character '@'.\n\
+         [line 2] Error: Unterminated string.\n"
+    );
+}
+
+#[test]
+fn scan_errors_stop_the_run_before_parsing() {
+    // The parse error on line 2 is not reported: scanning failed first.
+    let c = run_captured_streams("@\nprint ;");
+    assert_eq!(c.result, Err(RunError::Scan));
+    assert_eq!(c.stderr, "[line 1] Error: Unexpected character '@'.\n");
+}
+
+#[test]
+fn nothing_runs_when_any_error_was_found() {
+    let c = run_captured_streams("print 1;\nprint ;\nprint 3;");
+    assert_eq!(c.result, Err(RunError::Parse));
+    assert_eq!(c.stdout, "");
+}
+
+#[test]
+fn repl_reports_all_errors_in_a_line_and_keeps_going() {
+    let mut interpreter = Interpreter::with_streams(
+        Rc::new(RefCell::new(Vec::<u8>::new())),
+        Rc::new(RefCell::new(Vec::<u8>::new())),
+    );
+    assert_eq!(run_source(&mut interpreter, "var = 1; print ;"), Err(RunError::Parse));
+    assert_eq!(run_source(&mut interpreter, "var a = 1;"), Ok(()));
+}
+
+/* =====================================================================
+   Runtime errors show the operator's column and a source snippet
+   ===================================================================== */
+
+#[test]
+fn binary_type_errors_show_a_snippet_with_a_caret_under_the_operator() {
+    let c = run_captured_streams("var a = \"x\";\nprint a - 1;");
+    assert_eq!(c.result, Err(RunError::Runtime));
+    assert_eq!(
+        c.stderr,
+        "[line 2:9] Runtime error: Operands must be numbers.\n\
+         \x20 print a - 1;\n\
+         \x20         ^\n"
+    );
+}
+
+#[test]
+fn unary_errors_show_a_snippet_too() {
+    let c = run_captured_streams("print -\"a\";");
+    assert_eq!(c.result, Err(RunError::Runtime));
+    assert_eq!(
+        c.stderr,
+        "[line 1:7] Runtime error: Operand must be a number.\n\
+         \x20 print -\"a\";\n\
+         \x20       ^\n"
+    );
+}
+
+#[test]
+fn the_snippet_uses_the_line_the_operator_is_on() {
+    // The expression starts on line 2 but its operator is on line 3.
+    let c = run_captured_streams("print 1;\nvar x = 4\n  / 0;");
+    assert_eq!(c.result, Err(RunError::Runtime));
+    assert_eq!(c.stdout, "1\n");
+    assert_eq!(
+        c.stderr,
+        "[line 3:3] Runtime error: Division by zero.\n\
+         \x20   / 0;\n\
+         \x20   ^\n"
+    );
+}
+
+#[test]
+fn a_tab_in_the_source_is_kept_in_the_snippet() {
+    let c = run_captured_streams("\tprint 1 / 0;");
+    assert_eq!(
+        c.stderr,
+        "[line 1:10] Runtime error: Division by zero.\n\
+         \x20 \tprint 1 / 0;\n\
+         \x20 \t        ^\n"
+    );
+}
+
+#[test]
+fn windows_line_endings_do_not_leak_into_the_snippet() {
+    let c = run_captured_streams("print 1;\r\nprint 1 / 0;\r\n");
+    assert_eq!(
+        c.stderr,
+        "[line 2:9] Runtime error: Division by zero.\n\
+         \x20 print 1 / 0;\n\
+         \x20         ^\n"
+    );
+}
+
+#[test]
+fn runtime_errors_without_a_column_print_no_snippet() {
+    let c = run_captured_streams("print missing;");
+    assert_eq!(c.stderr, "[line 1] Runtime error: Undefined variable 'missing'.\n");
+}
+
+#[test]
+fn errors_inside_a_function_point_at_the_operator_in_the_function() {
+    let c = run_captured_streams("fun f(a) {\n  return a + nil;\n}\nf(1);");
+    assert_eq!(
+        c.stderr,
+        "[line 2:12] Runtime error: Operands must be two numbers or two strings.\n\
+         \x20   return a + nil;\n\
+         \x20            ^\n"
+    );
+}
+
+#[test]
+fn the_repl_shows_the_snippet_for_the_line_that_was_typed() {
+    let (out, err, _) = repl_session("print 1;\nprint 2 / 0;\nprint 3;\n");
+    assert_eq!(out, "1\n3\n");
+    assert_eq!(
+        err,
+        "[line 1:9] Runtime error: Division by zero.\n\
+         \x20 print 2 / 0;\n\
+         \x20         ^\n"
+    );
 }

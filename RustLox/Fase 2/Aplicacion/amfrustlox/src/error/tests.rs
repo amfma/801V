@@ -127,3 +127,97 @@ fn runtime_error_display_format() {
 fn located_and_unlocated_runtime_errors_are_distinct() {
     assert_ne!(Error::runtime_at(1, "x"), Error::RuntimeError);
 }
+
+/* ---------- columns and snippets ---------- */
+
+fn diagnostic_at(line: usize, column: Option<usize>) -> Diagnostic {
+    Diagnostic {
+        line,
+        column,
+        location: String::new(),
+        message: "boom".to_string(),
+    }
+}
+
+#[test]
+fn runtime_error_with_a_column_shows_line_and_column() {
+    assert_eq!(
+        Error::runtime_at_column(3, 9, "Division by zero.").to_string(),
+        "[line 3:9] Runtime error: Division by zero."
+    );
+}
+
+#[test]
+fn a_zero_column_means_unknown_and_is_dropped() {
+    let error = Error::runtime_at_column(3, 0, "Division by zero.");
+    assert_eq!(error.to_string(), "[line 3] Runtime error: Division by zero.");
+    match error {
+        Error::Runtime(d) => assert_eq!(d.column, None),
+        other => panic!("expected runtime error, got {other:?}"),
+    }
+}
+
+#[test]
+fn errors_without_a_column_keep_the_old_format() {
+    assert_eq!(
+        Error::runtime_at(3, "x").to_string(),
+        "[line 3] Runtime error: x"
+    );
+    assert_eq!(diagnostic_at(1, None).snippet("print 1;"), None);
+}
+
+#[test]
+fn snippet_shows_the_source_line_and_a_caret_under_the_column() {
+    assert_eq!(
+        diagnostic_at(1, Some(9)).snippet("print 1 / 0;"),
+        Some("  print 1 / 0;\n          ^".to_string())
+    );
+}
+
+#[test]
+fn snippet_picks_the_reported_line() {
+    let source = "var a = 1;\nvar b = a / 0;\nprint b;";
+    assert_eq!(
+        diagnostic_at(2, Some(11)).snippet(source),
+        Some("  var b = a / 0;\n            ^".to_string())
+    );
+}
+
+#[test]
+fn snippet_caret_in_column_one_has_no_padding() {
+    assert_eq!(
+        diagnostic_at(1, Some(1)).snippet("-true;"),
+        Some("  -true;\n  ^".to_string())
+    );
+}
+
+#[test]
+fn snippet_keeps_tabs_so_the_caret_lines_up() {
+    assert_eq!(
+        diagnostic_at(1, Some(10)).snippet("\tprint 1 / 0;"),
+        Some("  \tprint 1 / 0;\n  \t        ^".to_string())
+    );
+}
+
+#[test]
+fn snippet_ignores_a_carriage_return() {
+    assert_eq!(
+        diagnostic_at(1, Some(3)).snippet("1 + nil;\r\nprint 2;"),
+        Some("  1 + nil;\n    ^".to_string())
+    );
+}
+
+#[test]
+fn snippet_is_none_when_the_line_does_not_exist() {
+    assert_eq!(diagnostic_at(0, Some(1)).snippet("print 1;"), None);
+    assert_eq!(diagnostic_at(5, Some(1)).snippet("print 1;"), None);
+    assert_eq!(diagnostic_at(1, Some(1)).snippet(""), None);
+}
+
+#[test]
+fn snippet_pads_when_the_column_is_past_the_end_of_the_line() {
+    assert_eq!(
+        diagnostic_at(1, Some(6)).snippet("ab"),
+        Some("  ab\n       ^".to_string())
+    );
+}

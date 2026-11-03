@@ -920,8 +920,10 @@ use crate::error::Diagnostic;
 
 fn syntax_error(src: &str) -> Diagnostic {
     match parser_for(src).parse() {
-        Err(Error::Syntax(d)) => d,
-        Err(other) => panic!("expected a syntax error for `{src}`, got {other:?}"),
+        Err(errors) => match errors.into_iter().next() {
+            Some(Error::Syntax(d)) => d,
+            other => panic!("expected a syntax error for `{src}`, got {other:?}"),
+        },
         Ok(_) => panic!("`{src}` should not parse"),
     }
 }
@@ -1047,14 +1049,11 @@ fn only_the_first_error_is_reported() {
 
 #[test]
 fn syntax_errors_are_never_reported_as_other_variants() {
-    assert!(matches!(
-        parser_for("print 1").parse(),
-        Err(Error::Syntax(_))
-    ));
-    assert!(matches!(
-        parser_for("1 = 2;").parse(),
-        Err(Error::Syntax(_))
-    ));
+    for src in ["print 1", "1 = 2;"] {
+        let errors = parser_for(src).parse().unwrap_err();
+        assert!(!errors.is_empty());
+        assert!(errors.iter().all(|e| matches!(e, Error::Syntax(_))));
+    }
 }
 
 /* ---------- 255 argument / parameter limit ---------- */
@@ -1130,4 +1129,247 @@ fn line_numbers_do_not_affect_ast_equality() {
     assert_eq!(parse_expr("1\n+\n2"), parse_expr("1 + 2"));
     assert_eq!(parse_expr("1 + 2"), Expr::binary(num("1"), Operator::Add, num("2")));
     assert_eq!(parse_expr("\n-1"), Expr::unary(Operator::Subtract, num("1")));
+}
+
+/* =====================================================================
+   Error recovery (synchronize): several errors in one parse
+   ===================================================================== */
+
+/// Parses `src` as a program and returns every syntax diagnostic found.
+fn parse_errors(src: &str) -> Vec<Diagnostic> {
+    parser_for(src)
+        .parse()
+        .expect_err("program should not parse")
+        .into_iter()
+        .map(|e| match e {
+            Error::Syntax(d) => d,
+            other => panic!("expected a syntax error, got {other:?}"),
+        })
+        .collect()
+}
+
+fn lines(errors: &[Diagnostic]) -> Vec<usize> {
+    errors.iter().map(|d| d.line).collect()
+}
+
+#[test]
+fn reports_one_error_per_bad_statement() {
+    let errors = parse_errors("var = 1;\nprint ;");
+    assert_eq!(errors.len(), 2);
+    assert_eq!(
+        (errors[0].line, errors[0].location.as_str(), errors[0].message.as_str()),
+        (1, " at '='", "Expect variable name.")
+    );
+    assert_eq!(
+        (errors[1].line, errors[1].location.as_str(), errors[1].message.as_str()),
+        (2, " at ';'", "Expect expression.")
+    );
+}
+
+#[test]
+fn valid_statements_between_errors_add_no_errors() {
+    let errors = parse_errors("print 1;\nvar = 2;\nprint 3;\nvar x = 4;\nprint ;\nprint 5;");
+    assert_eq!(lines(&errors), vec![2, 5]);
+}
+
+#[test]
+fn a_failed_parse_returns_no_partial_program() {
+    assert!(parser_for("print 1;\nprint ;\nprint 2;").parse().is_err());
+}
+
+#[test]
+fn a_single_error_still_reports_exactly_one() {
+    assert_eq!(parse_errors("print 1 +;").len(), 1);
+    assert_eq!(parse_errors("print 1").len(), 1);
+}
+
+#[test]
+fn errors_are_reported_in_source_order() {
+    let errors = parse_errors("print ;\n\nvar = 1;\n\n1 = 2;\n\nprint ;");
+    let found = lines(&errors);
+    assert_eq!(found.len(), 4);
+    assert!(found.windows(2).all(|w| w[0] <= w[1]), "{found:?}");
+}
+
+#[test]
+fn recovers_at_a_statement_keyword_after_a_missing_semicolon() {
+    // The error is at the second `print`; recovery stops at a boundary and
+    // the rest of the program is parsed normally.
+    let errors = parse_errors("print 1\nprint 2;\nprint 3;");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].line, 2);
+    assert_eq!(errors[0].message, "Expect ';' after value.");
+}
+
+#[test]
+fn recovers_after_an_invalid_assignment_target() {
+    let errors = parse_errors("1 = 2;\nprint ;");
+    assert_eq!(errors.len(), 2);
+    assert_eq!(errors[0].message, "Invalid assignment target.");
+    assert_eq!(errors[1].message, "Expect expression.");
+}
+
+#[test]
+fn reports_an_error_at_end_of_input() {
+    let errors = parse_errors("print ;\nprint 1 +");
+    assert_eq!(errors.len(), 2);
+    assert_eq!(errors[1].location, " at end");
+}
+
+/* ---------- inside blocks ---------- */
+
+#[test]
+fn errors_inside_a_block_are_all_reported() {
+    let errors = parse_errors("{ var = 1; print ; var y = ; }");
+    assert_eq!(errors.len(), 3);
+}
+
+#[test]
+fn a_block_with_errors_still_closes_normally() {
+    // No spurious "Expect '}' after block." and the statement after it is checked.
+    let errors = parse_errors("{ var = 1; print ; }\nprint 3;\nprint ;");
+    assert_eq!(errors.len(), 3);
+    assert!(errors.iter().all(|d| d.message != "Expect '}' after block."));
+    assert_eq!(errors[2].line, 3);
+}
+
+#[test]
+fn recovery_does_not_swallow_the_closing_brace() {
+    // The missing `;` is found at `}`; the block must still end there.
+    let errors = parse_errors("{ print 1 }");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].message, "Expect ';' after value.");
+    assert_eq!(errors[0].location, " at '}'");
+}
+
+#[test]
+fn recovery_in_a_nested_block_keeps_the_outer_block_intact() {
+    let errors = parse_errors("{ { print } print 2; }\nprint ;");
+    assert_eq!(errors.len(), 2);
+    assert_eq!(errors[0].message, "Expect expression.");
+    assert_eq!(errors[1].line, 2);
+}
+
+#[test]
+fn an_unclosed_block_is_reported_once_at_end() {
+    let errors = parse_errors("{ print 1;");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].message, "Expect '}' after block.");
+    assert_eq!(errors[0].location, " at end");
+}
+
+#[test]
+fn errors_in_function_bodies_are_reported_and_parsing_continues() {
+    let errors = parse_errors("fun f() { var ; print ; }\nprint 1 +;");
+    assert_eq!(errors.len(), 3);
+    assert_eq!(errors[2].line, 2);
+}
+
+#[test]
+fn errors_in_control_flow_bodies_are_reported() {
+    let errors = parse_errors("if (true) { print ; }\nwhile (false) { var = 1; }");
+    assert_eq!(lines(&errors), vec![1, 2]);
+}
+
+/* ---------- classes ---------- */
+
+#[test]
+fn an_error_in_a_class_body_does_not_stop_later_statements() {
+    let errors = parse_errors("class A { foo( { } }\nprint ;");
+    assert!(errors.len() >= 2, "{errors:?}");
+    assert_eq!(errors[0].message, "Expect parameter name.");
+    assert_eq!(errors.last().unwrap().line, 2);
+}
+
+#[test]
+fn a_class_with_a_bad_header_and_later_errors() {
+    let errors = parse_errors("class { }\nvar = 1;");
+    assert_eq!(errors[0].message, "Expect class name.");
+    assert!(errors.iter().any(|d| d.line == 2 && d.message == "Expect variable name."));
+}
+
+/* ---------- termination ---------- */
+
+/// Recovery must always make progress: none of these may loop forever, and
+/// each must be rejected.
+#[test]
+fn synchronize_always_terminates_on_stray_tokens() {
+    for src in [
+        "}", ")", "} } }", ") ) )", "else", "(", "{", "class", "fun", "var", "print", "return",
+        "if", "while", "for", "1 +", "!", ";", ";;;", "{ ;", "{ } }", "fun f( {", "class A {",
+        "a.", "super", "this.",
+    ] {
+        assert!(program_fails(src), "`{src}` should not parse");
+    }
+}
+
+#[test]
+fn stray_closing_braces_are_each_reported() {
+    assert!(parse_errors("} }\nprint ;").len() >= 2);
+}
+
+#[test]
+fn error_free_programs_are_unaffected() {
+    assert!(parser_for("var a = 1;\n{ print a; }\nfun f(x) { return x; }\nclass B { m() {} }")
+        .parse()
+        .is_ok());
+}
+
+/* =====================================================================
+   Operator columns
+   ===================================================================== */
+
+fn column_of(expr: &Expr) -> usize {
+    match expr {
+        Expr::Binary { column, .. } | Expr::Unary { column, .. } => column.0,
+        other => panic!("expected binary or unary, got {other:?}"),
+    }
+}
+
+#[test]
+fn binary_expressions_record_the_operator_column() {
+    assert_eq!(column_of(&parse_expr("1 + 2")), 3);
+    assert_eq!(column_of(&parse_expr("1 - 2")), 3);
+    assert_eq!(column_of(&parse_expr("12 * 3")), 4);
+    assert_eq!(column_of(&parse_expr("1 / 2")), 3);
+    assert_eq!(column_of(&parse_expr("1 <= 2")), 3);
+    assert_eq!(column_of(&parse_expr("1 == 2")), 3);
+}
+
+#[test]
+fn logical_expressions_record_the_operator_column() {
+    assert_eq!(column_of(&parse_expr("true or false")), 6);
+    assert_eq!(column_of(&parse_expr("true and false")), 6);
+}
+
+#[test]
+fn unary_expressions_record_the_operator_column() {
+    assert_eq!(column_of(&parse_expr("-1")), 1);
+    assert_eq!(column_of(&parse_expr("  !true")), 3);
+}
+
+#[test]
+fn the_column_is_the_one_on_the_operators_own_line() {
+    assert_eq!(column_of(&parse_expr("1\n   * 2")), 4);
+}
+
+#[test]
+fn nested_operators_each_keep_their_own_column() {
+    // (1 + 2) * 3: the outer `*` is at column 9, the inner `+` at column 4.
+    match parse_expr("(1 + 2) * 3") {
+        Expr::Binary { column, left_operand, .. } => {
+            assert_eq!(column.0, 9);
+            match *left_operand {
+                Expr::Grouping { expr } => assert_eq!(column_of(&expr), 4),
+                other => panic!("expected grouping, got {other:?}"),
+            }
+        }
+        other => panic!("expected binary, got {other:?}"),
+    }
+}
+
+#[test]
+fn columns_do_not_affect_ast_equality() {
+    assert_eq!(parse_expr("1+2"), parse_expr("1   +   2"));
+    assert_eq!(parse_expr("-1"), parse_expr("  -  1"));
 }

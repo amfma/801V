@@ -395,6 +395,55 @@ fn returning_a_value_from_an_initializer_message() {
 }
 
 #[test]
+fn top_level_return_message() {
+    assert_resolve_error(
+        "return 1;",
+        1,
+        " at 'return'",
+        "Can't return from top-level code.",
+    );
+    assert_resolve_error(
+        "print 1;\nreturn;",
+        2,
+        " at 'return'",
+        "Can't return from top-level code.",
+    );
+}
+
+#[test]
+fn top_level_return_is_rejected_in_every_form() {
+    assert!(rejects("return;"));
+    assert!(rejects("return 1;"));
+    assert!(rejects("return nil;"));
+    assert!(rejects("{ return 1; }"));
+    assert!(rejects("if (true) return 1;"));
+    assert!(rejects("while (false) { return; }"));
+    assert!(rejects("for (;;) return;"));
+}
+
+#[test]
+fn return_is_still_rejected_after_a_function_ends() {
+    // The "inside a function" state must be restored when the body ends.
+    assert!(rejects("fun f() { return 1; }\nreturn 2;"));
+    assert!(rejects("class A { m() { return 1; } }\nreturn;"));
+    assert_resolve_error(
+        "fun f() {\n  return 1;\n}\nreturn 2;",
+        4,
+        " at 'return'",
+        "Can't return from top-level code.",
+    );
+}
+
+#[test]
+fn return_inside_any_function_is_still_accepted() {
+    assert!(accepts("fun f() { return; }"));
+    assert!(accepts("fun f() { { return 1; } }"));
+    assert!(accepts("fun f() { fun g() { return 1; } return g; }"));
+    assert!(accepts("{ fun f() { return 1; } }"));
+    assert!(accepts("class A { init() { return; } m() { return 1; } }"));
+}
+
+#[test]
 fn inheriting_from_itself_message() {
     assert_resolve_error(
         "class A < A {}",

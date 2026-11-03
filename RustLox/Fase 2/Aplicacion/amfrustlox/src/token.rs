@@ -1,6 +1,8 @@
 use std::{clone, fmt::format, string};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::error::Diagnostic;
+
 /* Token ID Count */
 static NEXT_TOKEN_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -68,6 +70,9 @@ pub struct Token {
     pub line: usize,
     pub literal: Literal,
     pub idx: TokenIndex,
+    /// 1-based column of the token's first character on its line, counted in
+    /// characters. `0` means unknown (tokens built by hand, e.g. in tests).
+    pub column: usize,
 }
 
 impl Token {
@@ -84,7 +89,14 @@ impl Token {
             line,
             literal,
             idx: TokenIndex(idx),
+            column: 0,
         }
+    }
+
+    /// Returns the token with its source column set.
+    pub fn with_column(mut self, column: usize) -> Self {
+        self.column = column;
+        self
     }
 
     pub fn to_string(self) -> String {
@@ -99,7 +111,12 @@ pub struct Scanner {
     start: usize,
     current: usize,
     line: usize,
-    error: Vec<i32>,
+    /// Index in `source` of the first character of the current line.
+    line_start: usize,
+    /// Column of the token being scanned (fixed when the token starts, so a
+    /// string that spans lines still reports where it began).
+    start_column: usize,
+    errors: Vec<Diagnostic>,
 }
 
 impl Scanner {
@@ -110,7 +127,9 @@ impl Scanner {
             start: 0,
             current: 0,
             line: 1,
-            error: vec![],
+            line_start: 0,
+            start_column: 1,
+            errors: vec![],
         }
     }
 
@@ -118,27 +137,64 @@ impl Scanner {
         self.current >= self.source.len()
     }
 
-    pub fn scan_tokens(mut self) -> Result<Vec<Token>, &'static str> {
+    /// Scans the whole source. A lexical error does not stop the scan: it is
+    /// recorded, the scanner resynchronizes, and scanning continues, so every
+    /// lexical error in the source is returned together.
+    pub fn scan_tokens(mut self) -> Result<Vec<Token>, Vec<Diagnostic>> {
         while !self.is_at_end() {
             self.start = self.current;
+            self.start_column = self.start - self.line_start + 1;
             self.scan_token();
         }
 
-        self.tokens
-            .push(Token::new(TokenType::EOF, "", self.line, Literal::None, next_token_id()));
+        let eof_column = self.current - self.line_start + 1;
+        self.tokens.push(
+            Token::new(TokenType::EOF, "", self.line, Literal::None, next_token_id())
+                .with_column(eof_column),
+        );
 
-        if self.error.len() == 0 {
+        if self.errors.is_empty() {
             Ok(self.tokens)
         } else {
-            Err("Error")
+            Err(self.errors)
+        }
+    }
+
+    /// Records a lexical error without interrupting the scan.
+    fn error(&mut self, line: usize, message: impl Into<String>) {
+        self.errors.push(Diagnostic {
+            line,
+            column: None,
+            location: String::new(),
+            message: message.into(),
+        });
+    }
+
+    /// True for characters that begin a token (or are skipped whitespace).
+    fn starts_token(c: char) -> bool {
+        matches!(
+            c,
+            '(' | ')' | '{' | '}' | ',' | '.' | '-' | '+' | '*' | ';' | '!' | '=' | '<' | '>'
+                | '/' | '"' | ' ' | '\r' | '\t' | '\n' | '_'
+        ) || c.is_alphabetic()
+            || c.is_ascii_digit()
+    }
+
+    /// Error recovery: after an unexpected character, skip the rest of the
+    /// run of characters that cannot start a token, so `@@@` is reported once
+    /// instead of three times. Scanning then resumes at the next valid start.
+    fn synchronize(&mut self) {
+        while !self.is_at_end() && !Self::starts_token(self.peek()) {
+            self.advance();
         }
     }
 
     fn add_token(&mut self, token_type: TokenType, literal: Literal) {
         let lexeme: String = self.source[self.start..self.current].iter().collect();
-        self.tokens
-            .push(Token::new(token_type, lexeme, self.line, literal, next_token_id()));
-        
+        self.tokens.push(
+            Token::new(token_type, lexeme, self.line, literal, next_token_id())
+                .with_column(self.start_column),
+        );
     }
 
     fn scan_token(&mut self) {
@@ -191,10 +247,13 @@ impl Scanner {
                 };
             }
             ' ' | '\r' | '\t' => {}
-            '\n' => self.line += 1,
+            '\n' => {
+                self.line += 1;
+                self.line_start = self.current;
+            }
             '"' => self.string(),
 
-            c if c.is_alphabetic() => {
+            c if c.is_alphabetic() || c == '_' => {
                 self.identifier();
             }
 
@@ -202,7 +261,10 @@ impl Scanner {
                 self.number();
             }
 
-            c => {}
+            c => {
+                self.error(self.line, format!("Unexpected character '{c}'."));
+                self.synchronize();
+            }
         }
     }
 
@@ -242,15 +304,20 @@ impl Scanner {
     }
 
     fn string(&mut self) {
+        let start_line = self.line;
         while self.peek() != '"' && !self.is_at_end() {
             if self.peek() == '\n' {
                 self.line += 1;
+                self.line_start = self.current + 1;
             }
 
             self.advance();
         }
 
         if self.is_at_end() {
+            // Reported where the string opened; the rest of the source was
+            // consumed by the string, so there is nothing left to resync on.
+            self.error(start_line, "Unterminated string.");
             return;
         }
 

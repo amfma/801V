@@ -175,11 +175,20 @@ fn two_consecutive_strings() {
     );
 }
 
-/// Documents the CURRENT behaviour: an unterminated string is silently
-/// dropped (the scanner's `error` vector is never filled).
 #[test]
-fn unterminated_string_currently_produces_no_token() {
-    assert_eq!(types("\"abc"), vec![T::EOF]);
+fn unterminated_string_is_an_error() {
+    let errors = scan_errors("\"abc");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].to_string(), "[line 1] Error: Unterminated string.");
+}
+
+/// The error points at the line where the string opened, even when the
+/// string runs over several lines before the input ends.
+#[test]
+fn unterminated_string_is_reported_at_its_opening_line() {
+    let errors = scan_errors("var a = 1;\nvar s = \"abc\n\ndef");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].line, 2);
 }
 
 /* ---------- numbers ---------- */
@@ -298,16 +307,110 @@ fn identifier_may_contain_keyword_followed_by_digits() {
 /* ---------- unknown characters ---------- */
 
 #[test]
-fn unknown_characters_are_ignored() {
-    assert_eq!(types("@ # $ ?"), vec![T::EOF]);
-    assert_eq!(types("1 @ 2"), vec![T::Number, T::Number, T::EOF]);
+fn unknown_character_is_an_error() {
+    let errors = scan_errors("@");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].to_string(),
+        "[line 1] Error: Unexpected character '@'."
+    );
 }
 
-/// Documents the CURRENT behaviour: `_` cannot start an identifier, so the
-/// leading underscore is silently skipped.
 #[test]
-fn leading_underscore_is_currently_skipped() {
-    assert_eq!(lexemes("_foo"), vec!["foo", ""]);
+fn separated_unknown_characters_are_each_reported() {
+    let errors = scan_errors("@ # $ ?");
+    assert_eq!(errors.len(), 4);
+    let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        vec![
+            "Unexpected character '@'.",
+            "Unexpected character '#'.",
+            "Unexpected character '$'.",
+            "Unexpected character '?'.",
+        ]
+    );
+}
+
+#[test]
+fn leading_underscore_starts_an_identifier() {
+    assert_eq!(lexemes("_foo"), vec!["_foo", ""]);
+    assert_eq!(types("_foo _"), vec![T::Identifier, T::Identifier, T::EOF]);
+}
+
+/* ---------- error recovery (synchronize) ---------- */
+
+/// Scans `src` and returns its diagnostics; the scan must fail.
+fn scan_errors(src: &str) -> Vec<Diagnostic> {
+    Scanner::new(src)
+        .scan_tokens()
+        .expect_err("scanning should fail")
+}
+
+#[test]
+fn scanning_continues_after_an_error_and_reports_all_of_them() {
+    let errors = scan_errors("var a = @;\nvar b = #;\nprint ?;");
+    assert_eq!(errors.len(), 3);
+    assert_eq!(
+        errors.iter().map(|e| e.line).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+}
+
+#[test]
+fn a_run_of_unknown_characters_is_one_error() {
+    let errors = scan_errors("1 @#$%^ 2");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].message, "Unexpected character '@'.");
+}
+
+#[test]
+fn recovery_resumes_at_the_next_valid_token() {
+    // `@@` is one error and does not swallow the `;` or the next line.
+    let errors = scan_errors("print 1 @@;\nprint 2 $;");
+    assert_eq!(errors.len(), 2);
+    assert_eq!(errors[0].line, 1);
+    assert_eq!(errors[1].line, 2);
+}
+
+#[test]
+fn recovery_does_not_swallow_adjacent_valid_characters() {
+    // The run stops at `;`, `(`, a letter, a digit and a quote.
+    for src in ["@;", "@(", "@a", "@1", "@\"x\""] {
+        let errors = scan_errors(src);
+        assert_eq!(errors.len(), 1, "`{src}`");
+    }
+    assert_eq!(scan_errors("@ \"abc\" @ 1").len(), 2);
+}
+
+#[test]
+fn errors_after_a_multiline_string_keep_correct_line_numbers() {
+    let errors = scan_errors("var s = \"a\nb\nc\";\n@");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].line, 4);
+}
+
+#[test]
+fn an_unknown_character_and_an_unterminated_string_are_both_reported() {
+    let errors = scan_errors("@\nvar s = \"oops");
+    assert_eq!(errors.len(), 2);
+    assert_eq!(errors[0].message, "Unexpected character '@'.");
+    assert_eq!(errors[1].message, "Unterminated string.");
+    assert_eq!(errors[1].line, 2);
+}
+
+#[test]
+fn errors_are_returned_in_source_order() {
+    let errors = scan_errors("@\n\n#\n\n$");
+    assert_eq!(
+        errors.iter().map(|e| e.line).collect::<Vec<_>>(),
+        vec![1, 3, 5]
+    );
+}
+
+#[test]
+fn valid_source_still_scans_without_errors() {
+    assert!(Scanner::new("var a = 1; // fine").scan_tokens().is_ok());
 }
 
 /* ---------- whole snippets ---------- */
@@ -400,4 +503,64 @@ fn tokens_with_equal_fields_are_equal_but_ids_make_scans_differ() {
     let c = Token::new(T::Plus, "+", 1, Literal::None, 2);
     assert_eq!(a, b);
     assert_ne!(a, c);
+}
+
+/* ---------- columns ---------- */
+
+fn columns(src: &str) -> Vec<usize> {
+    scan(src).into_iter().map(|t| t.column).collect()
+}
+
+#[test]
+fn tokens_record_their_one_based_column() {
+    // var a = 1;  ->  v=1, a=5, '='=7, 1=9, ';'=10, EOF=11
+    assert_eq!(columns("var a = 1;"), vec![1, 5, 7, 9, 10, 11]);
+}
+
+#[test]
+fn columns_restart_on_every_line() {
+    let tokens = scan("a\n  b\n\tc");
+    let found: Vec<(usize, usize)> = tokens.iter().map(|t| (t.line, t.column)).collect();
+    assert_eq!(found, vec![(1, 1), (2, 3), (3, 2), (3, 3)]);
+}
+
+#[test]
+fn multi_character_tokens_start_at_their_first_character() {
+    // "ab" is cols 1-4, `==` starts at 6, `c` at 9.
+    assert_eq!(columns("\"ab\" == c"), vec![1, 6, 9, 10]);
+    assert_eq!(columns("a >= b"), vec![1, 3, 6, 7]);
+}
+
+#[test]
+fn a_multiline_string_reports_the_column_where_it_started() {
+    let tokens = scan("x \"a\nb\" y");
+    assert_eq!(tokens[1].column, 3);
+    // `y` is on the string's last line: b=1, "=2, space=3, y=4.
+    assert_eq!(tokens[2].column, 4);
+}
+
+#[test]
+fn a_tab_counts_as_one_column() {
+    assert_eq!(columns("\tx"), vec![2, 3]);
+}
+
+#[test]
+fn columns_count_characters_not_bytes() {
+    // `é` is two bytes but one column.
+    assert_eq!(columns("é + 1"), vec![1, 3, 5, 6]);
+}
+
+#[test]
+fn eof_column_follows_the_last_character() {
+    assert_eq!(columns(""), vec![1]);
+    assert_eq!(columns("a\n"), vec![1, 1]);
+}
+
+#[test]
+fn hand_built_tokens_have_an_unknown_column() {
+    assert_eq!(Token::new(T::Plus, "+", 1, Literal::None, 1).column, 0);
+    assert_eq!(
+        Token::new(T::Plus, "+", 1, Literal::None, 1).with_column(7).column,
+        7
+    );
 }

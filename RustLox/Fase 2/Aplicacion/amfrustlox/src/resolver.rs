@@ -161,21 +161,30 @@ impl<'a> Resolver<'a> {
                 self.define(&name);
                 self.resolve_function(name, params, body, FunctionType::Function)?;
             }
-            Stmt::Return { keyword, value } => match value {
-                Expr::Nil => {
-                    return Ok(());
+            Stmt::Return { keyword, value } => {
+                // Checked first so that a bare `return;` is rejected too.
+                if let FunctionType::None = self.current_function {
+                    return Err(Error::resolve(
+                        keyword,
+                        "Can't return from top-level code.",
+                    ));
                 }
-                _ => {
-                    if let FunctionType::Initializer = self.current_function {
-                        return Err(Error::resolve(
-                            keyword,
-                            "Can't return a value from an initializer.",
-                        ));
-                    } else {
-                        self.resolve_expression(value)?;
+                match value {
+                    Expr::Nil => {
+                        return Ok(());
+                    }
+                    _ => {
+                        if let FunctionType::Initializer = self.current_function {
+                            return Err(Error::resolve(
+                                keyword,
+                                "Can't return a value from an initializer.",
+                            ));
+                        } else {
+                            self.resolve_expression(value)?;
+                        }
                     }
                 }
-            },
+            }
             Stmt::Class {
                 name,
                 methods,
@@ -244,6 +253,7 @@ impl<'a> Resolver<'a> {
                 operator: _,
                 right_operand,
                 line: _,
+                column: _,
             } => {
                 self.resolve_expression(left_operand)?;
                 self.resolve_expression(right_operand)
@@ -257,6 +267,7 @@ impl<'a> Resolver<'a> {
                 operator: _,
                 right_value,
                 line: _,
+                column: _,
             } => self.resolve_expression(right_value),
             Expr::Variable { name } => {
                 if let Some(last) = self.scopes.last() {

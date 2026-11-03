@@ -1333,11 +1333,68 @@ fn native_failures_are_reported_at_the_call_site() {
     }
 }
 
+/* ---------- columns of runtime errors ---------- */
+
+fn assert_runtime_error_at(src: &str, line: usize, column: usize, message: &str) {
+    let d = runtime_error(src);
+    assert_eq!(
+        (d.line, d.column, d.message.as_str()),
+        (line, Some(column), message),
+        "source: {src:?}"
+    );
+}
+
+#[test]
+fn binary_errors_report_the_operator_column() {
+    assert_runtime_error_at("print 1 / 0;", 1, 9, "Division by zero.");
+    assert_runtime_error_at(r#"print 1 - "a";"#, 1, 9, "Operands must be numbers.");
+    assert_runtime_error_at(
+        r#"print 1 < "a";"#,
+        1,
+        9,
+        "Operands must be two numbers or two strings.",
+    );
+    assert_runtime_error_at(
+        "print nil + nil;",
+        1,
+        11,
+        "Operands must be two numbers or two strings.",
+    );
+}
+
+#[test]
+fn binary_error_column_is_on_the_operators_own_line() {
+    assert_runtime_error_at("print 1 +\n  nil;", 1, 9, "Operands must be two numbers or two strings.");
+    assert_runtime_error_at("print 1\n   / 0;", 2, 4, "Division by zero.");
+}
+
+#[test]
+fn unary_errors_report_the_operator_column() {
+    assert_runtime_error_at(r#"print -"a";"#, 1, 7, "Operand must be a number.");
+    assert_runtime_error_at("print\n  -true;", 2, 3, "Operand must be a number.");
+}
+
+#[test]
+fn the_failing_operator_is_the_one_reported_in_a_chain() {
+    // 1 + 2 is fine; the `/` at column 15 is the one that fails.
+    assert_runtime_error_at("print 1 + 2 + 3 / 0;", 1, 17, "Division by zero.");
+    assert_runtime_error_at("print (1 + 2) / 0;", 1, 15, "Division by zero.");
+}
+
+#[test]
+fn errors_that_are_not_at_an_operator_have_no_column() {
+    assert_eq!(runtime_error("print missing;").column, None);
+    assert_eq!(runtime_error("var a = 1; a();").column, None);
+}
+
 #[test]
 fn runtime_error_display_is_lox_style() {
     let (mut interpreter, _) = new_interpreter();
     match try_run_in(&mut interpreter, "print 1 / 0;") {
-        Err(error) => assert_eq!(error.to_string(), "[line 1] Runtime error: Division by zero."),
+        Err(error) => assert_eq!(
+            error.to_string(),
+            "[line 1:9] Runtime error: Division by zero."
+        ),
         Ok(()) => panic!("should fail"),
     }
 }

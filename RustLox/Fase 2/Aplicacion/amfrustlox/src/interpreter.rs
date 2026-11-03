@@ -261,6 +261,7 @@ impl Interpreter {
                 operator,
                 right_operand,
                 line,
+                column,
             } => {
                 let left = self.evaluate_expression(left_operand)?;
 
@@ -297,7 +298,7 @@ impl Interpreter {
                     }
                     (Value::Number(left), Operator::Divide, Value::Number(right)) => {
                         if *right == 0.0 {
-                            Err(Error::runtime_at(line.0, "Division by zero."))
+                            Err(Error::runtime_at_column(line.0, column.0, "Division by zero."))
                         } else {
                             Ok(Value::Number(left / right))
                         }
@@ -335,8 +336,9 @@ impl Interpreter {
                     (_, Operator::Equal, _) => Ok(Value::Boolean(left == right)),
                     (_, Operator::Inequal, _) => Ok(Value::Boolean(left != right)),
                     /* Everything else is a type error */
-                    (_, Operator::Add, _) => Err(Error::runtime_at(
+                    (_, Operator::Add, _) => Err(Error::runtime_at_column(
                         line.0,
+                        column.0,
                         "Operands must be two numbers or two strings.",
                     )),
                     (
@@ -346,14 +348,15 @@ impl Interpreter {
                         | Operator::Greater
                         | Operator::GreaterEqual,
                         _,
-                    ) => Err(Error::runtime_at(
+                    ) => Err(Error::runtime_at_column(
                         line.0,
+                        column.0,
                         "Operands must be two numbers or two strings.",
                     )),
                     (_, Operator::Subtract | Operator::Multiply | Operator::Divide, _) => {
-                        Err(Error::runtime_at(line.0, "Operands must be numbers."))
+                        Err(Error::runtime_at_column(line.0, column.0, "Operands must be numbers."))
                     }
-                    _ => Err(Error::runtime_at(line.0, "Invalid binary operator.")),
+                    _ => Err(Error::runtime_at_column(line.0, column.0, "Invalid binary operator.")),
                 }
             }
             Expr::Numeric { value } => Ok(Value::Number(value.parse().unwrap())),
@@ -365,16 +368,17 @@ impl Interpreter {
                 operator,
                 right_value,
                 line,
+                column,
             } => {
                 let right = self.evaluate_expression(right_value)?;
 
                 match (operator, &right) {
                     (Operator::Subtract, Value::Number(right)) => Ok(Value::Number(-right)),
                     (Operator::Subtract, _) => {
-                        Err(Error::runtime_at(line.0, "Operand must be a number."))
+                        Err(Error::runtime_at_column(line.0, column.0, "Operand must be a number."))
                     }
                     (Operator::Negation, right) => Ok(Value::Boolean(!right.is_truthy())),
-                    _ => Err(Error::runtime_at(line.0, "Invalid unary operator.")),
+                    _ => Err(Error::runtime_at_column(line.0, column.0, "Invalid unary operator.")),
                 }
             }
             Expr::Variable { name } => match self.lookup_variable(name) {

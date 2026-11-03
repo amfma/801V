@@ -12,7 +12,9 @@ use std::{
     rc::Rc,
 };
 
-use crate::{interpreter::Interpreter, parser::Parser, resolver::Resolver, token::Scanner};
+use crate::{
+    error::Error, interpreter::Interpreter, parser::Parser, resolver::Resolver, token::Scanner,
+};
 
 /// The stage of the pipeline that rejected a program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,14 +49,23 @@ impl fmt::Display for RunError {
 /// Runs `source` on an existing interpreter (so state persists between calls).
 /// Parse, resolve and runtime diagnostics are written to the interpreter's stderr writer.
 pub fn run_source(interpreter: &mut Interpreter, source: &str) -> Result<(), RunError> {
-    let tokens = Scanner::new(source)
-        .scan_tokens()
-        .map_err(|_| RunError::Scan)?;
+    // Scan and parse errors are collected, so report every one of them.
+    let tokens = match Scanner::new(source).scan_tokens() {
+        Ok(tokens) => tokens,
+        Err(diagnostics) => {
+            for diagnostic in &diagnostics {
+                interpreter.report_error(&diagnostic.to_string());
+            }
+            return Err(RunError::Scan);
+        }
+    };
 
     let statements = match Parser::new(tokens).parse() {
         Ok(statements) => statements,
-        Err(error) => {
-            interpreter.report_error(&error.to_string());
+        Err(errors) => {
+            for error in &errors {
+                interpreter.report_error(&error.to_string());
+            }
             return Err(RunError::Parse);
         }
     };
@@ -73,6 +84,13 @@ pub fn run_source(interpreter: &mut Interpreter, source: &str) -> Result<(), Run
         Ok(()) => Ok(()),
         Err(error) => {
             interpreter.report_error(&error.to_string());
+            // Runtime errors raised at an operator also show the source line
+            // with a caret under the operator.
+            if let Error::Runtime(diagnostic) = &error {
+                if let Some(snippet) = diagnostic.snippet(source) {
+                    interpreter.report_error(&snippet);
+                }
+            }
             Err(RunError::Runtime)
         }
     }

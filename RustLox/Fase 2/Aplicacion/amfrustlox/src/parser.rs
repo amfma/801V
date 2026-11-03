@@ -52,6 +52,17 @@ impl PartialEq for Line {
     }
 }
 
+/// Source column of an operator (1-based, `0` when unknown), kept for runtime
+/// error messages. Metadata like `Line`: never part of AST equality.
+#[derive(Debug, Clone, Copy)]
+pub struct Column(pub usize);
+
+impl PartialEq for Column {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Binary {
@@ -59,6 +70,7 @@ pub enum Expr {
         operator: Operator,
         right_operand: Box<Expr>,
         line: Line,
+        column: Column,
     },
     Numeric {
         value: String,
@@ -77,6 +89,7 @@ pub enum Expr {
         operator: Operator,
         right_value: Box<Expr>,
         line: Line,
+        column: Column,
     },
     Variable {
         name: Token,
@@ -134,11 +147,22 @@ impl Expr {
     }
 
     pub fn binary_at(left: Expr, operator: Operator, right: Expr, line: usize) -> Expr {
+        Expr::binary_at_column(left, operator, right, line, 0)
+    }
+
+    pub fn binary_at_column(
+        left: Expr,
+        operator: Operator,
+        right: Expr,
+        line: usize,
+        column: usize,
+    ) -> Expr {
         Expr::Binary {
             left_operand: left.into(),
             operator,
             right_operand: right.into(),
             line: Line(line),
+            column: Column(column),
         }
     }
 
@@ -147,10 +171,15 @@ impl Expr {
     }
 
     pub fn unary_at(operator: Operator, right: Expr, line: usize) -> Expr {
+        Expr::unary_at_column(operator, right, line, 0)
+    }
+
+    pub fn unary_at_column(operator: Operator, right: Expr, line: usize, column: usize) -> Expr {
         Expr::Unary {
             operator,
             right_value: right.into(),
             line: Line(line),
+            column: Column(column),
         }
     }
 
@@ -271,6 +300,12 @@ const MAX_ARITY: usize = 255;
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    /// Syntax errors found so far; `parse` keeps going after each one.
+    errors: Vec<Error>,
+    /// How many `{ ... }` bodies (blocks, class bodies) we are inside.
+    /// `synchronize` uses it to stop before the `}` that closes the
+    /// enclosing body instead of swallowing it.
+    block_depth: usize,
 }
 
 impl Parser {
@@ -278,6 +313,8 @@ impl Parser {
         Self {
             tokens: tokens,
             current: 0,
+            errors: vec![],
+            block_depth: 0,
         }
     }
 
@@ -326,8 +363,9 @@ impl Parser {
         if self.match_tokens([TokenType::Bang, TokenType::Minus]) {
             let operator = Operator::from(&self.previous());
             let line = self.previous().line;
+            let column = self.previous().column;
             let right_operand: Expr = self.unary()?;
-            Ok(Expr::unary_at(operator, right_operand, line))
+            Ok(Expr::unary_at_column(operator, right_operand, line, column))
         } else {
             self.call()
         }
@@ -390,8 +428,9 @@ impl Parser {
         while self.match_tokens([TokenType::BangEqual, TokenType::EqualEqual]) {
             let operator: Operator = Operator::from(&self.previous());
             let line = self.previous().line;
+            let column = self.previous().column;
             let right: Expr = self.comparison()?;
-            left = Expr::binary_at(left, operator, right, line);
+            left = Expr::binary_at_column(left, operator, right, line, column);
         }
         Ok(left)
     }
@@ -406,8 +445,9 @@ impl Parser {
         ]) {
             let operator: Operator = Operator::from(&self.previous());
             let line = self.previous().line;
+            let column = self.previous().column;
             let right: Expr = self.term()?;
-            left = Expr::binary_at(left, operator, right, line);
+            left = Expr::binary_at_column(left, operator, right, line, column);
         }
         Ok(left)
     }
@@ -417,8 +457,9 @@ impl Parser {
         while self.match_tokens([TokenType::Plus, TokenType::Minus]) {
             let operator: Operator = Operator::from(&self.previous());
             let line = self.previous().line;
+            let column = self.previous().column;
             let right: Expr = self.factor()?;
-            left = Expr::binary_at(left, operator, right, line);
+            left = Expr::binary_at_column(left, operator, right, line, column);
         }
         Ok(left)
     }
@@ -428,8 +469,9 @@ impl Parser {
         while self.match_tokens([TokenType::Slash, TokenType::Star]) {
             let operator: Operator = Operator::from(&self.previous());
             let line = self.previous().line;
+            let column = self.previous().column;
             let right: Expr = self.unary()?;
-            left = Expr::binary_at(left, operator, right, line);
+            left = Expr::binary_at_column(left, operator, right, line, column);
         }
         Ok(left)
     }
@@ -457,8 +499,9 @@ impl Parser {
         while self.match_tokens([TokenType::Or]) {
             let operator = Operator::from(&self.previous());
             let line = self.previous().line;
+            let column = self.previous().column;
             let right = self.and()?;
-            left = Expr::binary_at(left, operator, right, line)
+            left = Expr::binary_at_column(left, operator, right, line, column)
         }
         Ok(left)
     }
@@ -469,8 +512,9 @@ impl Parser {
         while self.match_tokens([TokenType::And]) {
             let operator = Operator::from(&self.previous());
             let line = self.previous().line;
+            let column = self.previous().column;
             let right = self.equality()?;
-            left = Expr::binary_at(left, operator, right, line);
+            left = Expr::binary_at_column(left, operator, right, line, column);
         }
 
         Ok(left)
@@ -512,9 +556,15 @@ impl Parser {
     fn block(&mut self) -> Result<Vec<Stmt>, Error> {
         let mut statements: Vec<Stmt> = vec![];
 
+        self.block_depth += 1;
         while !self.check(TokenType::RightBrace) && !self.is_at_end() {
-            statements.push(self.declaration()?);
+            // A bad statement is recorded and skipped by `declaration`,
+            // so the rest of the block is still checked.
+            if let Some(statement) = self.declaration() {
+                statements.push(statement);
+            }
         }
+        self.block_depth -= 1;
 
         self.consume(TokenType::RightBrace, "Expect '}' after block.")?;
 
@@ -611,7 +661,59 @@ impl Parser {
     }
 
     /* Declarations */
-    fn declaration(&mut self) -> Result<Stmt, Error> {
+
+    /// Recovery point. Parses one declaration; on a syntax error it records
+    /// the error, skips ahead to a likely statement boundary and returns
+    /// `None` so the caller can keep parsing and find further errors.
+    fn declaration(&mut self) -> Option<Stmt> {
+        let depth = self.block_depth;
+        match self.declaration_inner() {
+            Ok(statement) => Some(statement),
+            Err(error) => {
+                // `?` may have unwound out of nested bodies without
+                // decrementing; restore the depth this declaration started at.
+                self.block_depth = depth;
+                self.errors.push(error);
+                self.synchronize();
+                None
+            }
+        }
+    }
+
+    /// Discards tokens until a statement boundary: just after a `;`, or just
+    /// before a keyword that starts a statement. Inside a `{ ... }` body it
+    /// also stops before the closing `}` so the body can end normally.
+    /// Always consumes at least one token (unless stopped at that `}`, which
+    /// the enclosing body loop consumes), so parsing cannot loop forever.
+    fn synchronize(&mut self) {
+        if self.block_depth > 0 && self.check(TokenType::RightBrace) {
+            return;
+        }
+        if !self.is_at_end() {
+            self.current += 1;
+        }
+
+        while !self.is_at_end() {
+            if self.previous().token_type == TokenType::Semicolon {
+                return;
+            }
+            match self.peek() {
+                TokenType::Class
+                | TokenType::Fun
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::While
+                | TokenType::Print
+                | TokenType::Return => return,
+                TokenType::RightBrace if self.block_depth > 0 => return,
+                _ => {}
+            }
+            self.current += 1;
+        }
+    }
+
+    fn declaration_inner(&mut self) -> Result<Stmt, Error> {
         if self.match_tokens([TokenType::Class]) {
             self.class_declaration()
         } else if self.match_tokens([TokenType::Fun]) {
@@ -636,9 +738,11 @@ impl Parser {
 
         self.consume(TokenType::LeftBrace, "Expect '{' before class body.")?;
         let mut methods = vec![];
+        self.block_depth += 1;
         while !self.check(TokenType::RightBrace) && !self.is_at_end() {
             methods.push(self.function("method")?);
         }
+        self.block_depth -= 1;
 
         self.consume(TokenType::RightBrace, "Expect '}' after class body.")?;
         Ok(Stmt::Class {
@@ -768,13 +872,22 @@ impl Parser {
         self.expression()
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Stmt>, Error> {
+    /// Parses a whole program. Syntax errors do not stop the parse: each one
+    /// is recorded, the parser synchronizes, and parsing continues, so every
+    /// error found is returned together (in source order).
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, Vec<Error>> {
         let mut statements: Vec<Stmt> = vec![];
         while !self.is_at_end() {
-            statements.push(self.declaration()?);
+            if let Some(statement) = self.declaration() {
+                statements.push(statement);
+            }
         }
 
-        Ok(statements)
+        if self.errors.is_empty() {
+            Ok(statements)
+        } else {
+            Err(std::mem::take(&mut self.errors))
+        }
     }
 }
 
