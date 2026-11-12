@@ -536,16 +536,11 @@ fn expr_constructors_build_expected_variants() {
     assert_eq!(
         Expr::str("x"),
         Expr::String {
-            value: "x".to_string()
+            value: Rc::from("x")
         }
     );
     assert_eq!(Expr::bool(true), Expr::Bool { value: true });
-    assert_eq!(
-        Expr::numeric("1"),
-        Expr::Numeric {
-            value: "1".to_string()
-        }
-    );
+    assert_eq!(Expr::numeric("1"), Expr::Numeric { value: 1.0 });
     assert_eq!(Expr::nil(), Expr::Nil);
     assert_eq!(
         Expr::grouping(Expr::nil()),

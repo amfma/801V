@@ -9,12 +9,18 @@ use std::{cell::RefCell, env};
 use crate::{
     enviroment::Enviroment,
     error::Error,
+    fxhash::FxHashMap,
     interpreter::{self, Interpreter, Value},
     parser::Stmt,
     token::Token,
 };
 
 pub type BoxedFunction = Box<dyn Fn(&[Value]) -> Result<Value, Error>>;
+
+thread_local! {
+    /// The name every bound method environment stores its receiver under.
+    static THIS: Rc<str> = Rc::from("this");
+}
 
 #[derive(Debug, PartialEq)]
 pub enum CallableType {
@@ -48,6 +54,8 @@ pub struct Function {
     pub params: Vec<Token>,
     pub body: Vec<Stmt>,
     pub closure: Rc<RefCell<Enviroment>>,
+    /// `params` names as shared strings, so a call binds them without allocating.
+    param_names: Vec<Rc<str>>,
 }
 
 impl Callable for Function {
@@ -80,6 +88,7 @@ impl Function {
             params: params.clone(),
             body: body.clone(),
             closure,
+            param_names: params.iter().map(|p| Rc::from(p.lexeme.as_str())).collect(),
         }
     }
 }
@@ -117,7 +126,7 @@ impl Callable for Native {
 #[derive(Debug)]
 pub struct Class {
     name: String,
-    methods: HashMap<String, Rc<Function>>,
+    methods: FxHashMap<String, Rc<Function>>,
     superclass: Option<Rc<Class>>
 }
 
@@ -127,7 +136,7 @@ impl Callable for Class {
     }
 
     fn arity(&self) -> usize {
-        match self.find_method(String::from("init")) {
+        match self.find_method("init") {
             Some(initializer)  => initializer.arity(),
             _ => 0
         }
@@ -135,7 +144,7 @@ impl Callable for Class {
 
     fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &Vec<Value>) -> Result<Value, Error> {
         let instance = Instance::new(Rc::clone(&self));
-        if let Some(initializer) = self.find_method(String::from("init")) {
+        if let Some(initializer) = self.find_method("init") {
             Rc::new(Method::bind(initializer, Rc::clone(&instance), true)).call(interpreter, arguments)?;
         }
         Ok(Value::Instance(instance))
@@ -154,16 +163,20 @@ impl Class {
     pub fn new(name: String, methods: HashMap<String, Rc<Function>>, superclass:Option<Rc<Class>>) -> Rc<Self> {
         Rc::new(Class {
             name: name,
-            methods,
+            methods: methods.into_iter().collect(),
             superclass
         })
     }
 
-    pub fn find_method(&self, name:String) -> Option<Rc<Function>> {
-        if let Some(function) = self.methods.get(&name) {
+    pub fn find_method(&self, name: impl AsRef<str>) -> Option<Rc<Function>> {
+        self.find_method_str(name.as_ref())
+    }
+
+    fn find_method_str(&self, name: &str) -> Option<Rc<Function>> {
+        if let Some(function) = self.methods.get(name) {
             Some(Rc::clone(function))
         } else if let Some(superclass) = &self.superclass {
-            superclass.find_method(name)
+            superclass.find_method_str(name)
         } else {
             None
         }
@@ -173,19 +186,21 @@ impl Class {
 #[derive(Debug)]
 pub struct Instance {
     class: Rc<Class>,
-    fields: HashMap<String, Value>
+    fields: FxHashMap<String, Value>
 }
 
 impl Instance {
     pub fn new(class: Rc<Class>) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Instance { class, fields: HashMap::new() }))
+        Rc::new(RefCell::new(Instance { class, fields: FxHashMap::default() }))
     } 
 
-    pub fn get(instance: &Rc<RefCell<Self>>, name: String) -> Option<Value> {
-        if let Some(field) = instance.borrow().fields.get(&name) {
+    pub fn get(instance: &Rc<RefCell<Self>>, name: impl AsRef<str>) -> Option<Value> {
+        let name = name.as_ref();
+        if let Some(field) = instance.borrow().fields.get(name) {
             Some(field.clone())
         } else {
-             instance.borrow().class.find_method(name.clone()).map(|function| {
+            let method = instance.borrow().class.find_method(name);
+            method.map(|function| {
                 Value::Callable(Rc::new(Method::bind(
                     function,
                     Rc::clone(instance),
@@ -193,8 +208,15 @@ impl Instance {
         }
     }
 
-    pub fn set(&mut self, name: String, value: Value) -> Value {
-        self.fields.insert(name.clone(), value.clone());
+    pub fn set(&mut self, name: impl AsRef<str>, value: Value) -> Value {
+        let name = name.as_ref();
+        // Only allocate the key the first time a field is created.
+        match self.fields.get_mut(name) {
+            Some(slot) => *slot = value.clone(),
+            None => {
+                self.fields.insert(name.to_string(), value.clone());
+            }
+        }
         value
     }
 }
@@ -220,7 +242,7 @@ impl Callable for Method {
         let resolved = execute(Rc::clone(&self.function), Rc::clone(&self.closure), interpreter, arguments);
 
         match resolved {
-            Ok(_) if self.is_init => Ok(self.closure.borrow().get_at(0, String::from("this")).unwrap()),
+            Ok(_) if self.is_init => Ok(self.closure.borrow().get_at(0, "this").unwrap()),
             _ => resolved
         }
     }
@@ -240,8 +262,8 @@ impl Method {
         instance: Rc<RefCell<Instance>>,
         is_init: bool
     ) -> Self {
-        let closure = Rc::new(RefCell::new(Enviroment::new(Some(Rc::clone(&function.closure)))));
-        closure.borrow_mut().define(String::from("this"), Value::Instance(instance));
+        let closure = Rc::new(RefCell::new(Enviroment::with_capacity(Some(Rc::clone(&function.closure)), 1)));
+        THIS.with(|this| closure.borrow_mut().define_shared(Rc::clone(this), Value::Instance(instance)));
 
         Method {
             closure,
@@ -258,10 +280,10 @@ fn execute(
     interpreter: &mut Interpreter,
     arguments: &Vec<Value>,
 ) -> Result<Value, Error> {
-    let mut enviroment = Enviroment::new(Some(closure));
+    let mut enviroment = Enviroment::with_capacity(Some(closure), function.param_names.len());
 
-    for (param, argument) in function.params.iter().zip(arguments) {
-        enviroment.define(String::from(&param.lexeme), argument.clone());
+    for (name, argument) in function.param_names.iter().zip(arguments) {
+        enviroment.define_shared(Rc::clone(name), argument.clone());
     }
 
     match interpreter.execute_function_block(&function.body, Rc::new(RefCell::new(enviroment))) {

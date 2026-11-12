@@ -75,7 +75,7 @@ fn num(n: f64) -> Value {
 }
 
 fn text(s: &str) -> Value {
-    Value::String(s.to_string())
+    Value::String(Rc::from(s))
 }
 
 fn boolean(b: bool) -> Value {

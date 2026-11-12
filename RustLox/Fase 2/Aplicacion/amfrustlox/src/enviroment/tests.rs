@@ -62,8 +62,8 @@ fn define_overwrites_an_existing_binding() {
 fn define_can_change_the_type_of_a_binding() {
     let env = global();
     define(&env, "a", num(1.0));
-    define(&env, "a", Value::String("now a string".to_string()));
-    assert_eq!(get(&env, "a"), Some(Value::String("now a string".to_string())));
+    define(&env, "a", Value::String(Rc::from("now a string")));
+    assert_eq!(get(&env, "a"), Some(Value::String(Rc::from("now a string"))));
 }
 
 #[test]
@@ -447,4 +447,79 @@ fn two_children_share_updates_made_through_a_common_parent() {
 
     assert!(first.borrow_mut().assign(key("counter"), num(1.0)).is_ok());
     assert_eq!(get(&second, "counter"), Some(num(1.0)));
+}
+
+/* ---------- storage: small Vec that spills into a hash map ---------- */
+
+#[test]
+fn growing_past_the_small_limit_keeps_every_binding() {
+    let env = global();
+    // Well past SMALL_LIMIT, so the storage switches to a hash map part-way through.
+    for i in 0..40 {
+        define(&env, &format!("var{i}"), num(i as f64));
+    }
+    for i in 0..40 {
+        assert_eq!(get(&env, &format!("var{i}")), Some(num(i as f64)), "var{i}");
+    }
+    assert_eq!(get(&env, "var40"), None);
+}
+
+#[test]
+fn assignment_and_redefinition_work_on_both_sides_of_the_switch() {
+    let env = global();
+    for i in 0..SMALL_LIMIT {
+        define(&env, &format!("v{i}"), num(0.0));
+    }
+    // Still small: redefine and assign.
+    define(&env, "v0", num(1.0));
+    assert!(env.borrow_mut().assign("v1", num(2.0)).is_ok());
+    // Push it over the limit, then check the earlier changes survived the move.
+    define(&env, "overflow", num(3.0));
+    assert_eq!(get(&env, "v0"), Some(num(1.0)));
+    assert_eq!(get(&env, "v1"), Some(num(2.0)));
+    assert_eq!(get(&env, "overflow"), Some(num(3.0)));
+    // And both operations still work once it is a map.
+    define(&env, "v0", num(10.0));
+    assert!(env.borrow_mut().assign("overflow", num(30.0)).is_ok());
+    assert_eq!(get(&env, "v0"), Some(num(10.0)));
+    assert_eq!(get(&env, "overflow"), Some(num(30.0)));
+    assert!(env.borrow_mut().assign("nope", num(0.0)).is_err());
+}
+
+#[test]
+fn redefining_a_name_replaces_it_instead_of_adding_a_second_binding() {
+    let env = global();
+    define(&env, "a", num(1.0));
+    define(&env, "a", num(2.0));
+    assert_eq!(get(&env, "a"), Some(num(2.0)));
+}
+
+#[test]
+fn define_variants_are_equivalent() {
+    let mut env = Enviroment::with_capacity(None, 3);
+    env.define("owned".to_string(), num(1.0));
+    env.define_str("borrowed", num(2.0));
+    env.define_shared(Rc::from("shared"), num(3.0));
+    assert_eq!(env.get("owned"), Some(num(1.0)));
+    assert_eq!(env.get("borrowed"), Some(num(2.0)));
+    assert_eq!(env.get("shared"), Some(num(3.0)));
+    assert_eq!(env.get_at(0, "shared"), Some(num(3.0)));
+}
+
+#[test]
+fn with_capacity_above_the_limit_still_works() {
+    let mut env = Enviroment::with_capacity(None, 1000);
+    for i in 0..20 {
+        env.define_str(&format!("x{i}"), num(i as f64));
+    }
+    assert_eq!(env.get("x19"), Some(num(19.0)));
+}
+
+#[test]
+fn lookups_accept_str_and_string() {
+    let env = global();
+    define(&env, "name", num(7.0));
+    assert_eq!(env.borrow().get("name"), Some(num(7.0)));
+    assert_eq!(env.borrow().get(String::from("name")), Some(num(7.0)));
+    assert_eq!(env.borrow().get(&String::from("name")), Some(num(7.0)));
 }

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::error::Error;
 use crate::token::{Literal, Token, TokenType};
 
@@ -72,11 +74,13 @@ pub enum Expr {
         line: Line,
         column: Column,
     },
+    /// Parsed once by the parser, so evaluating a literal never re-parses text.
     Numeric {
-        value: String,
+        value: f64,
     },
+    /// Shared with every `Value::String` the literal evaluates to (no copying).
     String {
-        value: String,
+        value: Rc<str>,
     },
     Grouping {
         expr: Box<Expr>,
@@ -124,7 +128,7 @@ pub enum Expr {
 impl Expr {
     pub fn str(value: &str) -> Expr {
         Expr::String {
-            value: String::from(value),
+            value: Rc::from(value),
         }
     }
 
@@ -134,7 +138,7 @@ impl Expr {
 
     pub fn numeric(value: &str) -> Expr {
         Expr::Numeric {
-            value: String::from(value),
+            value: value.parse().unwrap(),
         }
     }
 

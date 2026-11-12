@@ -10,6 +10,7 @@ use crate::{
     callable::{BoxedFunction, Callable, CallableType, Class, Function, Instance, Method, Native},
     enviroment::Enviroment,
     error::Error,
+    fxhash::FxHashMap,
     parser::{Expr, Operator, Stmt},
     token::{Token, TokenIndex},
 };
@@ -21,14 +22,16 @@ pub struct Interpreter {
     globals: Rc<RefCell<Enviroment>>,
     stdout: Rc<RefCell<dyn Write>>,
     stderr: Rc<RefCell<dyn Write>>,
-    locals: HashMap<TokenIndex, usize>,
+    locals: FxHashMap<TokenIndex, usize>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Value {
     Nil,
     Boolean(bool),
-    String(String),
+    /// Shared, immutable text: cloning a string value (reading a variable,
+    /// comparing, passing it to a function) copies a pointer, not the characters.
+    String(Rc<str>),
     Number(f64),
     Callable(Rc<dyn Callable>),
     Instance(Rc<RefCell<Instance>>),
@@ -98,7 +101,7 @@ impl Interpreter {
         );
 
         Interpreter {
-            locals: HashMap::new(),
+            locals: FxHashMap::default(),
             enviroment: globals.clone(),
             globals: globals,
             stdout,
@@ -124,7 +127,7 @@ impl Interpreter {
 
                 self.enviroment
                     .borrow_mut()
-                    .define(name.lexeme.to_string(), value);
+                    .define_str(&name.lexeme, value);
             }
             Stmt::Block { statements } => {
                 let env = self.enviroment.clone();
@@ -152,7 +155,7 @@ impl Interpreter {
                 let callable = Value::Callable(boxed_function);
                 self.enviroment
                     .borrow_mut()
-                    .define(name.lexeme.clone(), callable);
+                    .define_str(&name.lexeme, callable);
             }
             Stmt::Return { keyword: _, value } => {
                 let value = self.evaluate_expression(value)?;
@@ -165,7 +168,7 @@ impl Interpreter {
             } => {
                 self.enviroment
                     .borrow_mut()
-                    .define(name.lexeme.clone(), Value::Nil);
+                    .define_str(&name.lexeme, Value::Nil);
                 let closure = Rc::new(RefCell::new(Enviroment::new(Some(Rc::clone(
                     &self.enviroment,
                 )))));
@@ -181,8 +184,8 @@ impl Interpreter {
                             Value::Callable(callable)
                                 if callable.ctype() == CallableType::Class =>
                             {
-                                closure.borrow_mut().define(
-                                    String::from("super"),
+                                closure.borrow_mut().define_str(
+                                    "super",
                                     Value::Callable(Rc::clone(&callable)),
                                 );
                                 callable.as_class()
@@ -304,7 +307,10 @@ impl Interpreter {
                         }
                     }
                     (Value::String(left), Operator::Add, Value::String(right)) => {
-                        Ok(Value::String(String::from(left) + right))
+                        let mut joined = String::with_capacity(left.len() + right.len());
+                        joined.push_str(left);
+                        joined.push_str(right);
+                        Ok(Value::String(Rc::from(joined)))
                     }
                     /* Number comparasions */
                     (Value::Number(left), Operator::LessEqual, Value::Number(right)) => {
@@ -359,8 +365,8 @@ impl Interpreter {
                     _ => Err(Error::runtime_at_column(line.0, column.0, "Invalid binary operator.")),
                 }
             }
-            Expr::Numeric { value } => Ok(Value::Number(value.parse().unwrap())),
-            Expr::String { value } => Ok(Value::String(value.clone())),
+            Expr::Numeric { value } => Ok(Value::Number(*value)),
+            Expr::String { value } => Ok(Value::String(Rc::clone(value))),
             Expr::Grouping { expr } => Ok(self.evaluate_expression(expr)?),
             Expr::Nil => Ok(Value::Nil),
             Expr::Bool { value } => Ok(Value::Boolean(*value)),
@@ -390,7 +396,7 @@ impl Interpreter {
                 match self.locals.get(&name.idx) {
                     Some(distance) => {
                         self.enviroment.borrow_mut().assign_at(
-                            name.lexeme.clone(),
+                            &name.lexeme,
                             *distance,
                             value.clone(),
                         );
@@ -398,7 +404,7 @@ impl Interpreter {
                     None => {
                         self.globals
                             .borrow_mut()
-                            .assign(name.lexeme.clone(), value.clone())
+                            .assign(&name.lexeme, value.clone())
                             .map_err(|_| undefined_variable(name))?;
                     }
                 }
@@ -410,7 +416,7 @@ impl Interpreter {
                 arguments,
             } => {
                 let callee = self.evaluate_expression(callee)?;
-                let mut evaluated_arguments = vec![];
+                let mut evaluated_arguments = Vec::with_capacity(arguments.len());
                 for arg in arguments {
                     evaluated_arguments.push(self.evaluate_expression(arg)?);
                 }
@@ -444,7 +450,7 @@ impl Interpreter {
                 }
             }
             Expr::Get { expr, name } => match self.evaluate_expression(expr)? {
-                Value::Instance(instance) => match Instance::get(&instance, name.lexeme.clone()) {
+                Value::Instance(instance) => match Instance::get(&instance, &name.lexeme) {
                     Some(value) => Ok(value),
                     None => Err(Error::runtime(
                         name,
@@ -456,7 +462,7 @@ impl Interpreter {
             Expr::Set { expr, name, value } => match self.evaluate_expression(expr)? {
                 Value::Instance(instance) => {
                     let value = self.evaluate_expression(value)?;
-                    Ok(instance.borrow_mut().set(name.lexeme.clone(), value))
+                    Ok(instance.borrow_mut().set(&name.lexeme, value))
                 }
                 _ => Err(Error::runtime(name, "Only instances have fields.")),
             },
@@ -469,18 +475,18 @@ impl Interpreter {
                 let superclass = self
                     .enviroment
                     .borrow()
-                    .get_at(distance, "super".to_string())
+                    .get_at(distance, "super")
                     .unwrap();
                 let this = self
                     .enviroment
                     .borrow()
-                    .get_at(distance - 1, "this".to_string())
+                    .get_at(distance - 1, "this")
                     .unwrap();
 
                 match (superclass, this) {
                     (Value::Callable(callable), Value::Instance(instance)) => {
                         let supe = callable.as_class().unwrap();
-                        let fun = match supe.find_method(method.lexeme.clone()) {
+                        let fun = match supe.find_method(&method.lexeme) {
                             Some(method) => method,
                             _ => {
                                 return Err(Error::runtime(
@@ -510,8 +516,8 @@ impl Interpreter {
             Some(distance) => self
                 .enviroment
                 .borrow()
-                .get_at(*distance, token.lexeme.clone()),
-            None => self.globals.borrow().get(token.lexeme.clone()),
+                .get_at(*distance, &token.lexeme),
+            None => self.globals.borrow().get(&token.lexeme),
         }
     }
 
