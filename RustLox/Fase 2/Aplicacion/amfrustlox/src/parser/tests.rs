@@ -916,7 +916,7 @@ use crate::error::Diagnostic;
 fn syntax_error(src: &str) -> Diagnostic {
     match parser_for(src).parse() {
         Err(errors) => match errors.into_iter().next() {
-            Some(Error::Syntax(d)) => d,
+            Some(Error::Syntax(d)) => *d,
             other => panic!("expected a syntax error for `{src}`, got {other:?}"),
         },
         Ok(_) => panic!("`{src}` should not parse"),
@@ -1137,7 +1137,7 @@ fn parse_errors(src: &str) -> Vec<Diagnostic> {
         .expect_err("program should not parse")
         .into_iter()
         .map(|e| match e {
-            Error::Syntax(d) => d,
+            Error::Syntax(d) => *d,
             other => panic!("expected a syntax error, got {other:?}"),
         })
         .collect()

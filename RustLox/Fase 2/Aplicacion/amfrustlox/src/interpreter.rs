@@ -289,85 +289,27 @@ impl Interpreter {
 
                 let right = self.evaluate_expression(right_operand)?;
 
-                match (&left, operator, &right) {
-                    (Value::Number(left), Operator::Add, Value::Number(right)) => {
-                        Ok(Value::Number(left + right))
+                // Fast path for the overwhelmingly common number/number case.
+                if let (Value::Number(l), Value::Number(r)) = (&left, &right) {
+                    let (l, r) = (*l, *r);
+                    match operator {
+                        Operator::Add => return Ok(Value::Number(l + r)),
+                        Operator::Subtract => return Ok(Value::Number(l - r)),
+                        Operator::Multiply => return Ok(Value::Number(l * r)),
+                        Operator::Less => return Ok(Value::Boolean(l < r)),
+                        Operator::LessEqual => return Ok(Value::Boolean(l <= r)),
+                        Operator::Greater => return Ok(Value::Boolean(l > r)),
+                        Operator::GreaterEqual => return Ok(Value::Boolean(l >= r)),
+                        Operator::Equal => return Ok(Value::Boolean(l == r)),
+                        Operator::Inequal => return Ok(Value::Boolean(l != r)),
+                        _ => {}
                     }
-                    (Value::Number(left), Operator::Subtract, Value::Number(right)) => {
-                        Ok(Value::Number(left - right))
-                    }
-                    (Value::Number(left), Operator::Multiply, Value::Number(right)) => {
-                        Ok(Value::Number(left * right))
-                    }
-                    (Value::Number(left), Operator::Divide, Value::Number(right)) => {
-                        if *right == 0.0 {
-                            Err(Error::runtime_at_column(line.0, column.0, "Division by zero."))
-                        } else {
-                            Ok(Value::Number(left / right))
-                        }
-                    }
-                    (Value::String(left), Operator::Add, Value::String(right)) => {
-                        let mut joined = String::with_capacity(left.len() + right.len());
-                        joined.push_str(left);
-                        joined.push_str(right);
-                        Ok(Value::String(Rc::from(joined)))
-                    }
-                    /* Number comparasions */
-                    (Value::Number(left), Operator::LessEqual, Value::Number(right)) => {
-                        Ok(Value::Boolean(left <= right))
-                    }
-                    (Value::Number(left), Operator::GreaterEqual, Value::Number(right)) => {
-                        Ok(Value::Boolean(left >= right))
-                    }
-                    (Value::Number(left), Operator::Greater, Value::Number(right)) => {
-                        Ok(Value::Boolean(left > right))
-                    }
-                    (Value::Number(left), Operator::Less, Value::Number(right)) => {
-                        Ok(Value::Boolean(left < right))
-                    }
-                    /* String comparisions */
-                    (Value::String(left), Operator::Greater, Value::String(right)) => {
-                        Ok(Value::Boolean(left > right))
-                    }
-                    (Value::String(left), Operator::GreaterEqual, Value::String(right)) => {
-                        Ok(Value::Boolean(left >= right))
-                    }
-                    (Value::String(left), Operator::Less, Value::String(right)) => {
-                        Ok(Value::Boolean(left < right))
-                    }
-                    (Value::String(left), Operator::LessEqual, Value::String(right)) => {
-                        Ok(Value::Boolean(left <= right))
-                    }
-                    /* Type agnostic comparisions */
-                    (_, Operator::Equal, _) => Ok(Value::Boolean(left == right)),
-                    (_, Operator::Inequal, _) => Ok(Value::Boolean(left != right)),
-                    /* Everything else is a type error */
-                    (_, Operator::Add, _) => Err(Error::runtime_at_column(
-                        line.0,
-                        column.0,
-                        "Operands must be two numbers or two strings.",
-                    )),
-                    (
-                        _,
-                        Operator::Less
-                        | Operator::LessEqual
-                        | Operator::Greater
-                        | Operator::GreaterEqual,
-                        _,
-                    ) => Err(Error::runtime_at_column(
-                        line.0,
-                        column.0,
-                        "Operands must be two numbers or two strings.",
-                    )),
-                    (_, Operator::Subtract | Operator::Multiply | Operator::Divide, _) => {
-                        Err(Error::runtime_at_column(line.0, column.0, "Operands must be numbers."))
-                    }
-                    _ => Err(Error::runtime_at_column(line.0, column.0, "Invalid binary operator.")),
                 }
+                Self::binary_slow(left, operator, right, line.0, column.0)
             }
             Expr::Numeric { value } => Ok(Value::Number(*value)),
             Expr::String { value } => Ok(Value::String(Rc::clone(value))),
-            Expr::Grouping { expr } => Ok(self.evaluate_expression(expr)?),
+            Expr::Grouping { expr } => self.evaluate_expression(expr),
             Expr::Nil => Ok(Value::Nil),
             Expr::Bool { value } => Ok(Value::Boolean(*value)),
             Expr::Unary {
@@ -377,137 +319,240 @@ impl Interpreter {
                 column,
             } => {
                 let right = self.evaluate_expression(right_value)?;
-
                 match (operator, &right) {
                     (Operator::Subtract, Value::Number(right)) => Ok(Value::Number(-right)),
-                    (Operator::Subtract, _) => {
-                        Err(Error::runtime_at_column(line.0, column.0, "Operand must be a number."))
-                    }
                     (Operator::Negation, right) => Ok(Value::Boolean(!right.is_truthy())),
-                    _ => Err(Error::runtime_at_column(line.0, column.0, "Invalid unary operator.")),
+                    _ => Err(Self::unary_error(operator, line.0, column.0)),
                 }
             }
             Expr::Variable { name } => match self.lookup_variable(name) {
                 Some(value) => Ok(value),
                 None => Err(undefined_variable(name)),
             },
-            Expr::Assign { name, value } => {
-                let value = self.evaluate_expression(value)?;
-                match self.locals.get(&name.idx) {
-                    Some(distance) => {
-                        self.enviroment.borrow_mut().assign_at(
-                            &name.lexeme,
-                            *distance,
-                            value.clone(),
-                        );
-                    }
-                    None => {
-                        self.globals
-                            .borrow_mut()
-                            .assign(&name.lexeme, value.clone())
-                            .map_err(|_| undefined_variable(name))?;
-                    }
-                }
-                Ok(value)
-            }
+            Expr::Assign { name, value } => self.eval_assign(name, value),
             Expr::Call {
                 callee,
                 paren,
                 arguments,
-            } => {
-                let callee = self.evaluate_expression(callee)?;
-                let mut evaluated_arguments = Vec::with_capacity(arguments.len());
-                for arg in arguments {
-                    evaluated_arguments.push(self.evaluate_expression(arg)?);
-                }
-                match callee {
-                    Value::Callable(function) => {
-                        if function.arity() != evaluated_arguments.len() {
-                            Err(Error::runtime(
-                                paren,
-                                format!(
-                                    "Expected {} arguments but got {}.",
-                                    function.arity(),
-                                    evaluated_arguments.len()
-                                ),
-                            ))
-                        } else {
-                            function
-                                .call(self, &evaluated_arguments)
-                                .map_err(|error| match error {
-                                    // Natives have no position of their own: use the call site.
-                                    Error::RuntimeError => {
-                                        Error::runtime(paren, "Native function failed.")
-                                    }
-                                    other => other,
-                                })
-                        }
-                    }
-                    _ => Err(Error::runtime(
-                        paren,
-                        "Can only call functions and classes.",
-                    )),
-                }
-            }
-            Expr::Get { expr, name } => match self.evaluate_expression(expr)? {
-                Value::Instance(instance) => match Instance::get(&instance, &name.lexeme) {
-                    Some(value) => Ok(value),
-                    None => Err(Error::runtime(
-                        name,
-                        format!("Undefined property '{}'.", name.lexeme),
-                    )),
-                },
-                _ => Err(Error::runtime(name, "Only instances have properties.")),
-            },
-            Expr::Set { expr, name, value } => match self.evaluate_expression(expr)? {
-                Value::Instance(instance) => {
-                    let value = self.evaluate_expression(value)?;
-                    Ok(instance.borrow_mut().set(&name.lexeme, value))
-                }
-                _ => Err(Error::runtime(name, "Only instances have fields.")),
-            },
+            } => self.eval_call(callee, paren, arguments),
+            Expr::Get { expr, name } => self.eval_get(expr, name),
+            Expr::Set { expr, name, value } => self.eval_set(expr, name, value),
             Expr::This { keyword } => match self.lookup_variable(keyword) {
                 Some(value) => Ok(value),
                 None => Err(undefined_variable(keyword)),
             },
-            Expr::Super { keyword, method } => {
-                let distance = *self.locals.get(&keyword.idx).unwrap();
-                let superclass = self
-                    .enviroment
-                    .borrow()
-                    .get_at(distance, "super")
-                    .unwrap();
-                let this = self
-                    .enviroment
-                    .borrow()
-                    .get_at(distance - 1, "this")
-                    .unwrap();
+            Expr::Super { keyword, method } => self.eval_super(keyword, method),
+        }
+    }
 
-                match (superclass, this) {
-                    (Value::Callable(callable), Value::Instance(instance)) => {
-                        let supe = callable.as_class().unwrap();
-                        let fun = match supe.find_method(&method.lexeme) {
-                            Some(method) => method,
-                            _ => {
-                                return Err(Error::runtime(
-                                    method,
-                                    format!("Undefined property '{}'.", method.lexeme),
-                                ));
-                            }
-                        };
+    #[cold]
+    #[inline(never)]
+    fn unary_error(operator: &Operator, line: usize, column: usize) -> Error {
+        match operator {
+            Operator::Subtract => Error::runtime_at_column(line, column, "Operand must be a number."),
+            _ => Error::runtime_at_column(line, column, "Invalid unary operator."),
+        }
+    }
 
-                        Ok(Value::Callable(Rc::new(Method::bind(
-                            fun,
-                            instance,
-                            method.lexeme == "init",
-                        ))))
-                    }
-                    (supe, this) => panic!(
-                        "Unexpected literal types for super({:?}) and this({:?})",
-                        supe, this
-                    ),
+    /// Everything the number/number fast path does not cover (strings,
+    /// division, type errors).
+    #[inline(never)]
+    fn binary_slow(left: Value, operator: &Operator, right: Value, line: usize, column: usize) -> Output {
+        match (&left, operator, &right) {
+            (Value::Number(left), Operator::Add, Value::Number(right)) => {
+                Ok(Value::Number(left + right))
+            }
+            (Value::Number(left), Operator::Subtract, Value::Number(right)) => {
+                Ok(Value::Number(left - right))
+            }
+            (Value::Number(left), Operator::Multiply, Value::Number(right)) => {
+                Ok(Value::Number(left * right))
+            }
+            (Value::Number(left), Operator::Divide, Value::Number(right)) => {
+                if *right == 0.0 {
+                    Err(Error::runtime_at_column(line, column, "Division by zero."))
+                } else {
+                    Ok(Value::Number(left / right))
                 }
             }
+            (Value::String(left), Operator::Add, Value::String(right)) => {
+                let mut joined = String::with_capacity(left.len() + right.len());
+                joined.push_str(left);
+                joined.push_str(right);
+                Ok(Value::String(Rc::from(joined)))
+            }
+            /* Number comparasions */
+            (Value::Number(left), Operator::LessEqual, Value::Number(right)) => {
+                Ok(Value::Boolean(left <= right))
+            }
+            (Value::Number(left), Operator::GreaterEqual, Value::Number(right)) => {
+                Ok(Value::Boolean(left >= right))
+            }
+            (Value::Number(left), Operator::Greater, Value::Number(right)) => {
+                Ok(Value::Boolean(left > right))
+            }
+            (Value::Number(left), Operator::Less, Value::Number(right)) => {
+                Ok(Value::Boolean(left < right))
+            }
+            /* String comparisions */
+            (Value::String(left), Operator::Greater, Value::String(right)) => {
+                Ok(Value::Boolean(left > right))
+            }
+            (Value::String(left), Operator::GreaterEqual, Value::String(right)) => {
+                Ok(Value::Boolean(left >= right))
+            }
+            (Value::String(left), Operator::Less, Value::String(right)) => {
+                Ok(Value::Boolean(left < right))
+            }
+            (Value::String(left), Operator::LessEqual, Value::String(right)) => {
+                Ok(Value::Boolean(left <= right))
+            }
+            /* Type agnostic comparisions */
+            (_, Operator::Equal, _) => Ok(Value::Boolean(left == right)),
+            (_, Operator::Inequal, _) => Ok(Value::Boolean(left != right)),
+            /* Everything else is a type error */
+            (_, Operator::Add, _) => Err(Error::runtime_at_column(
+                line,
+                column,
+                "Operands must be two numbers or two strings.",
+            )),
+            (
+                _,
+                Operator::Less
+                | Operator::LessEqual
+                | Operator::Greater
+                | Operator::GreaterEqual,
+                _,
+            ) => Err(Error::runtime_at_column(
+                line,
+                column,
+                "Operands must be two numbers or two strings.",
+            )),
+            (_, Operator::Subtract | Operator::Multiply | Operator::Divide, _) => {
+                Err(Error::runtime_at_column(line, column, "Operands must be numbers."))
+            }
+            _ => Err(Error::runtime_at_column(line, column, "Invalid binary operator.")),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_assign(&mut self, name: &Token, value: &Expr) -> Output {
+        let value = self.evaluate_expression(value)?;
+        match self.locals.get(&name.idx) {
+            Some(distance) => {
+                self.enviroment
+                    .borrow_mut()
+                    .assign_at(&name.lexeme, *distance, value.clone());
+            }
+            None => {
+                self.globals
+                    .borrow_mut()
+                    .assign(&name.lexeme, value.clone())
+                    .map_err(|_| undefined_variable(name))?;
+            }
+        }
+        Ok(value)
+    }
+
+    #[inline(never)]
+    fn eval_call(&mut self, callee: &Expr, paren: &Token, arguments: &[Expr]) -> Output {
+        let callee = self.evaluate_expression(callee)?;
+        let mut evaluated_arguments = Vec::with_capacity(arguments.len());
+        for arg in arguments {
+            evaluated_arguments.push(self.evaluate_expression(arg)?);
+        }
+        match callee {
+            Value::Callable(function) => {
+                if function.arity() != evaluated_arguments.len() {
+                    Err(Error::runtime(
+                        paren,
+                        format!(
+                            "Expected {} arguments but got {}.",
+                            function.arity(),
+                            evaluated_arguments.len()
+                        ),
+                    ))
+                } else {
+                    function
+                        .call(self, &evaluated_arguments)
+                        .map_err(|error| match error {
+                            // Natives have no position of their own: use the call site.
+                            Error::RuntimeError => {
+                                Error::runtime(paren, "Native function failed.")
+                            }
+                            other => other,
+                        })
+                }
+            }
+            _ => Err(Error::runtime(
+                paren,
+                "Can only call functions and classes.",
+            )),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_get(&mut self, expr: &Expr, name: &Token) -> Output {
+        match self.evaluate_expression(expr)? {
+            Value::Instance(instance) => match Instance::get(&instance, &name.lexeme) {
+                Some(value) => Ok(value),
+                None => Err(Error::runtime(
+                    name,
+                    format!("Undefined property '{}'.", name.lexeme),
+                )),
+            },
+            _ => Err(Error::runtime(name, "Only instances have properties.")),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_set(&mut self, expr: &Expr, name: &Token, value: &Expr) -> Output {
+        match self.evaluate_expression(expr)? {
+            Value::Instance(instance) => {
+                let value = self.evaluate_expression(value)?;
+                Ok(instance.borrow_mut().set(&name.lexeme, value))
+            }
+            _ => Err(Error::runtime(name, "Only instances have fields.")),
+        }
+    }
+
+    #[inline(never)]
+    fn eval_super(&mut self, keyword: &Token, method: &Token) -> Output {
+        let distance = *self.locals.get(&keyword.idx).unwrap();
+        let superclass = self
+            .enviroment
+            .borrow()
+            .get_at(distance, "super")
+            .unwrap();
+        let this = self
+            .enviroment
+            .borrow()
+            .get_at(distance - 1, "this")
+            .unwrap();
+
+        match (superclass, this) {
+            (Value::Callable(callable), Value::Instance(instance)) => {
+                let supe = callable.as_class().unwrap();
+                let fun = match supe.find_method(&method.lexeme) {
+                    Some(method) => method,
+                    _ => {
+                        return Err(Error::runtime(
+                            method,
+                            format!("Undefined property '{}'.", method.lexeme),
+                        ));
+                    }
+                };
+
+                Ok(Value::Callable(Rc::new(Method::bind(
+                    fun,
+                    instance,
+                    method.lexeme == "init",
+                ))))
+            }
+            (supe, this) => panic!(
+                "Unexpected literal types for super({:?}) and this({:?})",
+                supe, this
+            ),
         }
     }
 

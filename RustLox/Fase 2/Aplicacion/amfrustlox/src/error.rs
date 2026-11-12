@@ -60,12 +60,16 @@ impl fmt::Display for Diagnostic {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
+    // The diagnostics are boxed on purpose: `Error` is the error half of every
+    // `Result` the evaluator returns, so keeping it small (it was 80 bytes with
+    // the `Diagnostic` inline) makes every expression evaluation cheaper. Errors
+    // are rare, so the extra allocation only happens on the failure path.
     /// Produced by the parser.
-    Syntax(Diagnostic),
+    Syntax(Box<Diagnostic>),
     /// Produced by the resolver.
-    Resolve(Diagnostic),
+    Resolve(Box<Diagnostic>),
     /// A located failure while the program runs (type errors, undefined names, ...).
-    Runtime(Diagnostic),
+    Runtime(Box<Diagnostic>),
     /// A failure with no source position (e.g. a native function failing).
     RuntimeError,
     Return(Value),
@@ -74,11 +78,11 @@ pub enum Error {
 
 impl Error {
     pub fn syntax(token: &Token, message: impl Into<String>) -> Error {
-        Error::Syntax(Diagnostic::at(token, message))
+        Error::Syntax(Box::new(Diagnostic::at(token, message)))
     }
 
     pub fn resolve(token: &Token, message: impl Into<String>) -> Error {
-        Error::Resolve(Diagnostic::at(token, message))
+        Error::Resolve(Box::new(Diagnostic::at(token, message)))
     }
 
     /// Runtime error located at the line of `token`.
@@ -88,12 +92,12 @@ impl Error {
 
     /// Runtime error located at an explicit line.
     pub fn runtime_at(line: usize, message: impl Into<String>) -> Error {
-        Error::Runtime(Diagnostic {
+        Error::Runtime(Box::new(Diagnostic {
             line,
             column: None,
             location: String::new(),
             message: message.into(),
-        })
+        }))
     }
 
     /// Runtime error located at an explicit line and column. A column of `0`
@@ -103,12 +107,12 @@ impl Error {
         column: usize,
         message: impl Into<String>,
     ) -> Error {
-        Error::Runtime(Diagnostic {
+        Error::Runtime(Box::new(Diagnostic {
             line,
             column: (column > 0).then_some(column),
             location: String::new(),
             message: message.into(),
-        })
+        }))
     }
 }
 

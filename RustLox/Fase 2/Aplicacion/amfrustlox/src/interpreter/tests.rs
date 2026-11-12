@@ -1174,7 +1174,7 @@ use crate::error::Diagnostic;
 fn runtime_error(src: &str) -> Diagnostic {
     let (mut interpreter, _) = new_interpreter();
     match try_run_in(&mut interpreter, src) {
-        Err(Error::Runtime(d)) => d,
+        Err(Error::Runtime(d)) => *d,
         Err(other) => panic!("expected a located runtime error for `{src}`, got {other:?}"),
         Ok(()) => panic!("`{src}` should fail at runtime"),
     }

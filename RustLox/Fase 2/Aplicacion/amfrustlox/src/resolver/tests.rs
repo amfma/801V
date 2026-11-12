@@ -307,7 +307,7 @@ use crate::error::Diagnostic;
 
 fn resolve_error(src: &str) -> Diagnostic {
     match resolve_src(src) {
-        Err(Error::Resolve(d)) => d,
+        Err(Error::Resolve(d)) => *d,
         Err(other) => panic!("expected a resolve error for `{src}`, got {other:?}"),
         Ok(_) => panic!("`{src}` should not resolve"),
     }

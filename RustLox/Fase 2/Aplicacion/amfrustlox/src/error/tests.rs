@@ -45,7 +45,7 @@ fn error_syntax_wraps_a_diagnostic() {
     let t = token(TokenType::Number, "42", 2);
     assert_eq!(
         Error::syntax(&t, "msg"),
-        Error::Syntax(Diagnostic::at(&t, "msg"))
+        Error::Syntax(Box::new(Diagnostic::at(&t, "msg")))
     );
 }
 
@@ -54,7 +54,7 @@ fn error_resolve_wraps_a_diagnostic() {
     let t = token(TokenType::This, "this", 2);
     assert_eq!(
         Error::resolve(&t, "msg"),
-        Error::Resolve(Diagnostic::at(&t, "msg"))
+        Error::Resolve(Box::new(Diagnostic::at(&t, "msg")))
     );
 }
 
