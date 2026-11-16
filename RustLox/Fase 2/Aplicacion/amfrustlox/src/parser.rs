@@ -194,7 +194,7 @@ impl Expr {
     }
 
     pub fn variable(name: Token) -> Expr {
-        Expr::Variable { name: name }
+        Expr::Variable { name }
     }
 
     pub fn assign(name: Token, value: Expr) -> Expr {
@@ -267,7 +267,7 @@ pub enum Stmt {
     },
     Var {
         name: Token,
-        initializar: Option<Expr>,
+        initializer: Option<Expr>,
     },
     Block {
         statements: Vec<Stmt>,
@@ -278,7 +278,7 @@ pub enum Stmt {
         else_branch: Option<Box<Stmt>>,
     },
     While {
-        contion: Expr,
+        condition: Expr,
         body: Box<Stmt>,
     },
     Function {
@@ -315,7 +315,7 @@ pub struct Parser {
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self {
-            tokens: tokens,
+            tokens,
             current: 0,
             errors: vec![],
             block_depth: 0,
@@ -586,12 +586,12 @@ impl Parser {
         if self.match_tokens([TokenType::Else]) {
             else_branch = Some(self.statement()?);
         }
-        let else_branch = else_branch.map(|x| Box::new(x));
+        let else_branch = else_branch.map(Box::new);
 
         Ok(Stmt::If {
             condition,
             then_branch: then_branch.into(),
-            else_branch: else_branch,
+            else_branch,
         })
     }
 
@@ -603,7 +603,7 @@ impl Parser {
         let body = self.statement()?;
 
         Ok(Stmt::While {
-            contion: condition,
+            condition,
             body: Box::new(body),
         })
     }
@@ -641,7 +641,7 @@ impl Parser {
         }
 
         let looped = Stmt::While {
-            contion: condition,
+            condition,
             body: Box::new(body),
         };
 
@@ -772,8 +772,8 @@ impl Parser {
         )?;
 
         Ok(Stmt::Var {
-            name: name,
-            initializar: initializer,
+            name,
+            initializer,
         })
     }
 
@@ -893,10 +893,6 @@ impl Parser {
             Err(std::mem::take(&mut self.errors))
         }
     }
-}
-
-pub struct ast {
-    pub start: Vec<Expr>,
 }
 
 #[cfg(test)]

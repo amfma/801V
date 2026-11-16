@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     callable::{BoxedFunction, Callable, CallableType, Class, Function, Instance, Method, Native},
-    enviroment::Enviroment,
+    environment::Environment,
     error::Error,
     fxhash::FxHashMap,
     parser::{Expr, Operator, Stmt},
@@ -23,8 +23,8 @@ type Output = Result<Value, Error>;
 pub const MAX_CALL_DEPTH: usize = 10_000;
 
 pub struct Interpreter {
-    enviroment: Rc<RefCell<Enviroment>>,
-    globals: Rc<RefCell<Enviroment>>,
+    environment: Rc<RefCell<Environment>>,
+    globals: Rc<RefCell<Environment>>,
     stdout: Rc<RefCell<dyn Write>>,
     stderr: Rc<RefCell<dyn Write>>,
     locals: FxHashMap<TokenIndex, usize>,
@@ -61,10 +61,7 @@ impl PartialEq for Value {
 
 impl Value {
     pub fn is_truthy(&self) -> bool {
-        match &self {
-            Value::Nil | Value::Boolean(false) => false,
-            _ => true,
-        }
+        !matches!(self, Value::Nil | Value::Boolean(false))
     }
 }
 
@@ -93,7 +90,7 @@ impl Interpreter {
 
     /// Both output streams injected (used by tests and tooling).
     pub fn with_streams(stdout: Rc<RefCell<dyn Write>>, stderr: Rc<RefCell<dyn Write>>) -> Self {
-        let globals = Rc::new(RefCell::new(Enviroment::new(None)));
+        let globals = Rc::new(RefCell::new(Environment::new(None)));
 
         let clock: BoxedFunction = Box::new(|_| {
             let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -109,8 +106,8 @@ impl Interpreter {
         Interpreter {
             locals: FxHashMap::default(),
             call_depth: 0,
-            enviroment: globals.clone(),
-            globals: globals,
+            environment: globals.clone(),
+            globals,
             stdout,
             stderr,
         }
@@ -126,18 +123,18 @@ impl Interpreter {
                 writeln!(self.stdout.borrow_mut(), "{}", value).map_err(|_| Error::RuntimeError)?;
             }
 
-            Stmt::Var { name, initializar } => {
-                let value = match initializar {
+            Stmt::Var { name, initializer } => {
+                let value = match initializer {
                     Some(value) => self.evaluate_expression(value)?,
                     None => Value::Nil,
                 };
 
-                self.enviroment
+                self.environment
                     .borrow_mut()
                     .define_str(&name.lexeme, value);
             }
             Stmt::Block { statements } => {
-                let env = self.enviroment.clone();
+                let env = self.environment.clone();
                 self.execute_block(statements, env)?;
             }
             Stmt::If {
@@ -151,16 +148,16 @@ impl Interpreter {
                     self.execute_statement(alternative)?;
                 }
             }
-            Stmt::While { contion, body } => {
-                while self.evaluate_expression(contion)?.is_truthy() {
+            Stmt::While { condition, body } => {
+                while self.evaluate_expression(condition)?.is_truthy() {
                     self.execute_statement(body)?;
                 }
             }
             Stmt::Function { name, params, body } => {
                 let boxed_function =
-                    Rc::new(Function::new(self.enviroment.clone(), name, params, body));
+                    Rc::new(Function::new(self.environment.clone(), name, params, body));
                 let callable = Value::Callable(boxed_function);
-                self.enviroment
+                self.environment
                     .borrow_mut()
                     .define_str(&name.lexeme, callable);
             }
@@ -173,11 +170,11 @@ impl Interpreter {
                 methods,
                 superclass: superclass_expr,
             } => {
-                self.enviroment
+                self.environment
                     .borrow_mut()
                     .define_str(&name.lexeme, Value::Nil);
-                let closure = Rc::new(RefCell::new(Enviroment::new(Some(Rc::clone(
-                    &self.enviroment,
+                let closure = Rc::new(RefCell::new(Environment::new(Some(Rc::clone(
+                    &self.environment,
                 )))));
 
                 let superclass = match superclass_expr {
@@ -206,7 +203,7 @@ impl Interpreter {
                 let method_env = if superclass.is_some() {
                     Rc::clone(&closure)
                 } else {
-                    Rc::clone(&self.enviroment)
+                    Rc::clone(&self.environment)
                 };
                 let mut final_methods = HashMap::new();
                 for method in methods {
@@ -223,7 +220,7 @@ impl Interpreter {
                 let class = Class::new(name.lexeme.clone(), final_methods, superclass);
 
                 if self
-                    .enviroment
+                    .environment
                     .borrow_mut()
                     .assign(name.lexeme.clone(), Value::Callable(class))
                     .is_err()
@@ -239,28 +236,28 @@ impl Interpreter {
     fn execute_block(
         &mut self,
         statements: &Vec<Stmt>,
-        env: Rc<RefCell<Enviroment>>,
+        env: Rc<RefCell<Environment>>,
     ) -> Result<(), Error> {
-        let new_env = Rc::new(RefCell::new(Enviroment::new(Some(env))));
+        let new_env = Rc::new(RefCell::new(Environment::new(Some(env))));
         self.execute_function_block(statements, new_env)
     }
 
     pub fn execute_function_block(
         &mut self,
         statements: &Vec<Stmt>,
-        env: Rc<RefCell<Enviroment>>,
+        env: Rc<RefCell<Environment>>,
     ) -> Result<(), Error> {
-        let current = self.enviroment.clone();
-        self.enviroment = env;
+        let current = self.environment.clone();
+        self.environment = env;
 
         for statement in statements {
             if let err @ Err(_) = self.execute_statement(statement) {
-                self.enviroment = current;
+                self.environment = current;
                 return err;
             }
         }
 
-        self.enviroment = current;
+        self.environment = current;
         Ok(())
     }
 
@@ -447,7 +444,7 @@ impl Interpreter {
         let value = self.evaluate_expression(value)?;
         match self.locals.get(&name.idx) {
             Some(distance) => {
-                self.enviroment
+                self.environment
                     .borrow_mut()
                     .assign_at(&name.lexeme, *distance, value.clone());
             }
@@ -528,12 +525,12 @@ impl Interpreter {
     fn eval_super(&mut self, keyword: &Token, method: &Token) -> Output {
         let distance = *self.locals.get(&keyword.idx).unwrap();
         let superclass = self
-            .enviroment
+            .environment
             .borrow()
             .get_at(distance, "super")
             .unwrap();
         let this = self
-            .enviroment
+            .environment
             .borrow()
             .get_at(distance - 1, "this")
             .unwrap();
@@ -567,7 +564,7 @@ impl Interpreter {
     fn lookup_variable(&self, token: &Token) -> Option<Value> {
         match self.locals.get(&token.idx) {
             Some(distance) => self
-                .enviroment
+                .environment
                 .borrow()
                 .get_at(*distance, &token.lexeme),
             None => self.globals.borrow().get(&token.lexeme),

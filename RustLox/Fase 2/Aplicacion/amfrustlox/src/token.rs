@@ -1,4 +1,3 @@
-use std::{clone, fmt::format, string};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::error::Diagnostic;
@@ -98,9 +97,11 @@ impl Token {
         self.column = column;
         self
     }
+}
 
-    pub fn to_string(self) -> String {
-        format!("{:#?} {} {:#?}", self.token_type, self.lexeme, self.literal)
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?} {} {:#?}", self.token_type, self.lexeme, self.literal)
     }
 }
 
@@ -257,7 +258,7 @@ impl Scanner {
                 self.identifier();
             }
 
-            c if c.is_digit(10) => {
+            c if c.is_ascii_digit() => {
                 self.number();
             }
 
@@ -290,7 +291,7 @@ impl Scanner {
 
     fn peek(&self) -> char {
         if self.is_at_end() {
-            return '\x00';
+            '\x00'
         } else {
             self.source[self.current]
         }
@@ -331,14 +332,14 @@ impl Scanner {
     }
 
     fn number(&mut self) {
-        while self.peek().is_digit(10) {
+        while self.peek().is_ascii_digit() {
             self.advance();
         }
 
-        if self.peek() == '.' && self.peek_next().is_digit(10) {
+        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
             self.advance();
 
-            while self.peek().is_digit(10) {
+            while self.peek().is_ascii_digit() {
                 self.advance();
             }
         }

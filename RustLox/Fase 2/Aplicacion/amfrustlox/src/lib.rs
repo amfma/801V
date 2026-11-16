@@ -1,5 +1,5 @@
 pub mod callable;
-pub mod enviroment;
+pub mod environment;
 pub mod error;
 pub mod fxhash;
 pub mod interpreter;

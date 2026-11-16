@@ -598,9 +598,9 @@ fn parses_multiple_statements_in_order() {
 #[test]
 fn parses_var_declaration_with_initializer() {
     match &parse_program("var a = 1;")[0] {
-        Stmt::Var { name, initializar } => {
+        Stmt::Var { name, initializer } => {
             assert_eq!(name.lexeme, "a");
-            assert_eq!(initializar, &Some(num("1")));
+            assert_eq!(initializer, &Some(num("1")));
         }
         other => panic!("expected var, got {other:?}"),
     }
@@ -609,9 +609,9 @@ fn parses_var_declaration_with_initializer() {
 #[test]
 fn parses_var_declaration_without_initializer() {
     match &parse_program("var a;")[0] {
-        Stmt::Var { name, initializar } => {
+        Stmt::Var { name, initializer } => {
             assert_eq!(name.lexeme, "a");
-            assert!(initializar.is_none());
+            assert!(initializer.is_none());
         }
         other => panic!("expected var, got {other:?}"),
     }
@@ -707,8 +707,8 @@ fn malformed_if_is_an_error() {
 #[test]
 fn parses_while() {
     match &parse_program("while (true) print 1;")[0] {
-        Stmt::While { contion, body } => {
-            assert_eq!(*contion, Expr::bool(true));
+        Stmt::While { condition, body } => {
+            assert_eq!(*condition, Expr::bool(true));
             assert!(matches!(**body, Stmt::Print { .. }));
         }
         other => panic!("expected while, got {other:?}"),
@@ -902,7 +902,7 @@ fn for_loop_without_increment_uses_the_body_directly() {
 #[test]
 fn for_loop_without_condition_loops_forever_by_default() {
     match &parse_program("for (;;) print 1;")[0] {
-        Stmt::While { contion, .. } => assert_eq!(*contion, Expr::bool(true)),
+        Stmt::While { condition, .. } => assert_eq!(*condition, Expr::bool(true)),
         other => panic!("expected while, got {other:?}"),
     }
 }

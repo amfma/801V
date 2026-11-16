@@ -2,15 +2,14 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
-use std::hash::Hash;
 use std::rc::Rc;
-use std::{cell::RefCell, env};
+use std::cell::RefCell;
 
 use crate::{
-    enviroment::Enviroment,
+    environment::Environment,
     error::Error,
     fxhash::FxHashMap,
-    interpreter::{self, Interpreter, Value},
+    interpreter::{Interpreter, Value},
     parser::Stmt,
     token::Token,
 };
@@ -35,7 +34,7 @@ pub trait Callable {
 
     fn arity(&self) -> usize;
 
-    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &Vec<Value>) -> Result<Value, Error>;
+    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &[Value]) -> Result<Value, Error>;
 
     fn name(&self) -> String;
 
@@ -53,7 +52,7 @@ pub struct Function {
     pub name: Token,
     pub params: Vec<Token>,
     pub body: Vec<Stmt>,
-    pub closure: Rc<RefCell<Enviroment>>,
+    pub closure: Rc<RefCell<Environment>>,
     /// `params` names as shared strings, so a call binds them without allocating.
     param_names: Vec<Rc<str>>,
 }
@@ -63,7 +62,7 @@ impl Callable for Function {
         self.params.len()
     }
 
-    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &Vec<Value>) -> Result<Value, Error> {
+    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &[Value]) -> Result<Value, Error> {
         let closure = Rc::clone(&self.closure);
         execute(self, closure, interpreter, arguments)
     }
@@ -82,11 +81,11 @@ impl Callable for Function {
 }
 
 impl Function {
-    pub fn new(closure: Rc<RefCell<Enviroment>>, name: &Token, params: &Vec<Token>, body: &Vec<Stmt>) -> Self {
+    pub fn new(closure: Rc<RefCell<Environment>>, name: &Token, params: &[Token], body: &[Stmt]) -> Self {
         Self {
             name: name.clone(),
-            params: params.clone(),
-            body: body.clone(),
+            params: params.to_vec(),
+            body: body.to_vec(),
             closure,
             param_names: params.iter().map(|p| Rc::from(p.lexeme.as_str())).collect(),
         }
@@ -110,7 +109,7 @@ impl Callable for Native {
         self.arity
     }
 
-    fn call(self: Rc<Self>, _interpreter: &mut Interpreter, arguments: &Vec<Value>) -> Result<Value, Error> {
+    fn call(self: Rc<Self>, _interpreter: &mut Interpreter, arguments: &[Value]) -> Result<Value, Error> {
         (self.func)(arguments)
     }
 
@@ -142,7 +141,7 @@ impl Callable for Class {
         }
     }
 
-    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &Vec<Value>) -> Result<Value, Error> {
+    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &[Value]) -> Result<Value, Error> {
         let instance = Instance::new(Rc::clone(&self));
         if let Some(initializer) = self.find_method("init") {
             Rc::new(Method::bind(initializer, Rc::clone(&instance), true)).call(interpreter, arguments)?;
@@ -162,7 +161,7 @@ impl Callable for Class {
 impl Class {
     pub fn new(name: String, methods: HashMap<String, Rc<Function>>, superclass:Option<Rc<Class>>) -> Rc<Self> {
         Rc::new(Class {
-            name: name,
+            name,
             methods: methods.into_iter().collect(),
             superclass
         })
@@ -228,7 +227,7 @@ impl Display for Instance {
 }
 
 pub struct Method {
-    closure: Rc<RefCell<Enviroment>>,
+    closure: Rc<RefCell<Environment>>,
     function: Rc<Function>,
     is_init: bool
 }
@@ -238,7 +237,7 @@ impl Callable for Method {
         self.function.arity()
     }
 
-    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &Vec<Value>) -> Result<Value, Error> {
+    fn call(self: Rc<Self>, interpreter: &mut Interpreter, arguments: &[Value]) -> Result<Value, Error> {
         let resolved = execute(Rc::clone(&self.function), Rc::clone(&self.closure), interpreter, arguments);
 
         match resolved {
@@ -262,7 +261,7 @@ impl Method {
         instance: Rc<RefCell<Instance>>,
         is_init: bool
     ) -> Self {
-        let closure = Rc::new(RefCell::new(Enviroment::with_capacity(Some(Rc::clone(&function.closure)), 1)));
+        let closure = Rc::new(RefCell::new(Environment::with_capacity(Some(Rc::clone(&function.closure)), 1)));
         THIS.with(|this| closure.borrow_mut().define_shared(Rc::clone(this), Value::Instance(instance)));
 
         Method {
@@ -276,17 +275,17 @@ impl Method {
 
 fn execute(
     function: Rc<Function>,
-    closure: Rc<RefCell<Enviroment>>,
+    closure: Rc<RefCell<Environment>>,
     interpreter: &mut Interpreter,
-    arguments: &Vec<Value>,
+    arguments: &[Value],
 ) -> Result<Value, Error> {
-    let mut enviroment = Enviroment::with_capacity(Some(closure), function.param_names.len());
+    let mut environment = Environment::with_capacity(Some(closure), function.param_names.len());
 
     for (name, argument) in function.param_names.iter().zip(arguments) {
-        enviroment.define_shared(Rc::clone(name), argument.clone());
+        environment.define_shared(Rc::clone(name), argument.clone());
     }
 
-    match interpreter.execute_function_block(&function.body, Rc::new(RefCell::new(enviroment))) {
+    match interpreter.execute_function_block(&function.body, Rc::new(RefCell::new(environment))) {
         Ok(()) => Ok(Value::Nil),
         Err(Error::Return(value)) => Ok(value),
         Err(err) => Err(err),

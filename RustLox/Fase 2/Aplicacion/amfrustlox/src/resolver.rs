@@ -127,9 +127,9 @@ impl<'a> Resolver<'a> {
                 self.resolve_expression(expr)?;
             }
             Stmt::Print { expr } => self.resolve_expression(expr)?,
-            Stmt::Var { name, initializar } => {
+            Stmt::Var { name, initializer } => {
                 self.declare(name)?;
-                match initializar {
+                match initializer {
                     Some(expression) => self.resolve_expression(expression)?,
                     None => self.resolve_expression(&Expr::Nil)?,
                 };
@@ -152,13 +152,13 @@ impl<'a> Resolver<'a> {
                     None => return Ok(()),
                 };
             }
-            Stmt::While { contion, body } => {
-                self.resolve_expression(contion)?;
+            Stmt::While { condition, body } => {
+                self.resolve_expression(condition)?;
                 self.resolve_statement(body)?
             }
             Stmt::Function { name, params, body } => {
-                self.declare(&name)?;
-                self.define(&name);
+                self.declare(name)?;
+                self.define(name);
                 self.resolve_function(name, params, body, FunctionType::Function)?;
             }
             Stmt::Return { keyword, value } => {
@@ -199,14 +199,12 @@ impl<'a> Resolver<'a> {
                     if let Expr::Variable {
                         name: superclass_name,
                     } = superclass_expr
-                    {
-                        if name.lexeme == superclass_name.lexeme {
+                        && name.lexeme == superclass_name.lexeme {
                             return Err(Error::resolve(
                                 superclass_name,
                                 "A class can't inherit from itself.",
                             ));
                         }
-                    }
                     self.current_class = ClassType::Subclass;
                     self.resolve_expression(superclass_expr)?;
 
@@ -270,14 +268,13 @@ impl<'a> Resolver<'a> {
                 column: _,
             } => self.resolve_expression(right_value),
             Expr::Variable { name } => {
-                if let Some(last) = self.scopes.last() {
-                    if let Some(State::Declared) = last.get(&name.lexeme) {
+                if let Some(last) = self.scopes.last()
+                    && let Some(State::Declared) = last.get(&name.lexeme) {
                         return Err(Error::resolve(
                             name,
                             "Can't read local variable in its own initializer.",
                         ));
                     }
-                }
 
                 self.resolve_local(name);
                 Ok(())

@@ -8,7 +8,9 @@ fn new_interpreter() -> (Interpreter, Rc<RefCell<Vec<u8>>>) {
     (Interpreter::new(sink), buffer)
 }
 
-fn new_streams() -> (Interpreter, Rc<RefCell<Vec<u8>>>, Rc<RefCell<Vec<u8>>>) {
+type SharedBuffer = Rc<RefCell<Vec<u8>>>;
+
+fn new_streams() -> (Interpreter, SharedBuffer, SharedBuffer) {
     let out = Rc::new(RefCell::new(Vec::<u8>::new()));
     let err = Rc::new(RefCell::new(Vec::<u8>::new()));
     let out_sink: Rc<RefCell<dyn Write>> = out.clone();

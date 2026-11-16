@@ -57,7 +57,7 @@ fn fails(src: &str) -> bool {
 }
 
 fn global(interpreter: &Interpreter, name: &str) -> Option<Value> {
-    interpreter.globals.borrow().get(name.to_string())
+    interpreter.globals.borrow().get(name)
 }
 
 /// Evaluates an expression by storing it in a global and reading it back.
@@ -215,7 +215,7 @@ fn environment_is_restored_after_a_runtime_error_in_a_block() {
     let (mut interpreter, _) = new_interpreter();
     let result = try_run_in(&mut interpreter, "{ var a = 1; var b = 1 / 0; }");
     assert!(result.is_err());
-    assert!(Rc::ptr_eq(&interpreter.enviroment, &interpreter.globals));
+    assert!(Rc::ptr_eq(&interpreter.environment, &interpreter.globals));
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn environment_is_restored_after_a_runtime_error_in_a_function() {
     let (mut interpreter, _) = new_interpreter();
     assert!(try_run_in(&mut interpreter, "fun boom() { return 1 / 0; }").is_ok());
     assert!(try_run_in(&mut interpreter, "boom();").is_err());
-    assert!(Rc::ptr_eq(&interpreter.enviroment, &interpreter.globals));
+    assert!(Rc::ptr_eq(&interpreter.environment, &interpreter.globals));
 }
 
 /* =====================================================================
@@ -1121,7 +1121,9 @@ fn expression_statements_print_nothing() {
    stderr writer
    ===================================================================== */
 
-fn interpreter_with_streams() -> (Interpreter, Rc<RefCell<Vec<u8>>>, Rc<RefCell<Vec<u8>>>) {
+type SharedBuffer = Rc<RefCell<Vec<u8>>>;
+
+fn interpreter_with_streams() -> (Interpreter, SharedBuffer, SharedBuffer) {
     let out = Rc::new(RefCell::new(Vec::<u8>::new()));
     let err = Rc::new(RefCell::new(Vec::<u8>::new()));
     let out_sink: Rc<RefCell<dyn Write>> = out.clone();

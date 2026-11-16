@@ -128,11 +128,10 @@ pub fn run_source(interpreter: &mut Interpreter, source: &str) -> Result<(), Run
             interpreter.report_error(&error.to_string());
             // Runtime errors raised at an operator also show the source line
             // with a caret under the operator.
-            if let Error::Runtime(diagnostic) = &error {
-                if let Some(snippet) = diagnostic.snippet(source) {
+            if let Error::Runtime(diagnostic) = &error
+                && let Some(snippet) = diagnostic.snippet(source) {
                     interpreter.report_error(&snippet);
                 }
-            }
             Err(RunError::Runtime)
         }
     }
