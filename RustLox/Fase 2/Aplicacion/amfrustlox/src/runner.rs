@@ -10,11 +10,53 @@ use std::{
     fmt,
     io::{self, BufRead, Write},
     rc::Rc,
+    thread,
 };
 
 use crate::{
     error::Error, interpreter::Interpreter, parser::Parser, resolver::Resolver, token::Scanner,
 };
+
+/// Stack size of the thread the interpreter runs on. The evaluator recurses on
+/// the Rust stack, so this has to cover `interpreter::MAX_CALL_DEPTH` nested
+/// Lox calls (plus deeply nested expressions) with a wide margin. It is only
+/// reserved address space; pages are committed as they are used.
+pub const STACK_SIZE: usize = 256 * 1024 * 1024;
+
+/// glibc gives every non-main thread its own malloc arena, which trims and
+/// re-grows its heap far more eagerly than the main arena does; for an
+/// allocation-heavy interpreter that costs up to ~30%. Capping the arena
+/// count at 1 makes the interpreter thread share the main arena, exactly as if
+/// it had run on the main thread.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn use_main_malloc_arena() {
+    unsafe extern "C" {
+        fn mallopt(param: i32, value: i32) -> i32;
+    }
+    const M_ARENA_MAX: i32 = -8;
+    // SAFETY: `mallopt` is a plain libc call with integer arguments; it is
+    // called before the interpreter thread (or any other thread) allocates.
+    unsafe {
+        mallopt(M_ARENA_MAX, 1);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn use_main_malloc_arena() {}
+
+/// Runs `work` on a thread with `STACK_SIZE` bytes of stack and returns its
+/// result. A panic in `work` is propagated to the caller.
+pub fn with_big_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    use_main_malloc_arena();
+    let handle = thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(work)
+        .expect("could not start the interpreter thread");
+    match handle.join() {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
 
 /// The stage of the pipeline that rejected a program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +148,11 @@ pub struct Captured {
 
 /// Runs `source` on a fresh interpreter, capturing both output streams.
 pub fn run_captured_streams(source: &str) -> Captured {
+    let source = source.to_owned();
+    with_big_stack(move || run_captured_streams_here(&source))
+}
+
+fn run_captured_streams_here(source: &str) -> Captured {
     let out = Rc::new(RefCell::new(Vec::<u8>::new()));
     let err = Rc::new(RefCell::new(Vec::<u8>::new()));
     let out_sink: Rc<RefCell<dyn Write>> = out.clone();

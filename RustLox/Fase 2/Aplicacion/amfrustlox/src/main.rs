@@ -3,6 +3,12 @@ use std::{cell::RefCell, env, io, process, rc::Rc};
 use amfrustlox::{interpreter::Interpreter, runner};
 
 fn main() {
+    // Lox recursion maps onto Rust recursion: run on a thread with a big stack.
+    let code = runner::with_big_stack(real_main);
+    process::exit(code);
+}
+
+fn real_main() -> i32 {
     let args: Vec<String> = env::args().collect();
     let mut interpreter = Interpreter::new(Rc::new(RefCell::new(io::stdout())));
 
@@ -13,13 +19,14 @@ fn main() {
                 runner::repl(&mut stdin.lock(), &mut io::stdout(), &mut interpreter)
             {
                 eprintln!("I/O error: {error}");
-                process::exit(74);
+                return 74;
             }
+            0
         }
-        2 => process::exit(runner::run_file(&mut interpreter, &args[1])),
+        2 => runner::run_file(&mut interpreter, &args[1]),
         _ => {
             eprintln!("Usage: amfrustlox [script]");
-            process::exit(64);
+            64
         }
     }
 }

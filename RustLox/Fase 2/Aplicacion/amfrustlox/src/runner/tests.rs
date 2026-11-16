@@ -581,3 +581,30 @@ fn the_repl_shows_the_snippet_for_the_line_that_was_typed() {
          \x20         ^\n"
     );
 }
+
+#[test]
+fn stack_overflow_is_a_runtime_error_and_the_interpreter_stays_usable() {
+    // Interpreter is not `Send`, so build and use it inside the big-stack thread.
+    let (first, second, depth_ok) = with_big_stack(|| {
+        let mut interpreter = Interpreter::with_streams(
+            Rc::new(RefCell::new(Vec::<u8>::new())),
+            Rc::new(RefCell::new(Vec::<u8>::new())),
+        );
+        let first = run_source(&mut interpreter, "fun f(n) { return f(n + 1); } f(0);");
+        // The depth counter must be back to zero: a modest recursion still works.
+        let second = run_source(
+            &mut interpreter,
+            "fun d(n) { if (n == 0) return 0; return 1 + d(n - 1); } d(5000);",
+        );
+        let depth_ok = run_source(&mut interpreter, "d(100);");
+        (first, second, depth_ok)
+    });
+    assert_eq!(first, Err(RunError::Runtime));
+    assert_eq!(second, Ok(()));
+    assert_eq!(depth_ok, Ok(()));
+}
+
+#[test]
+fn with_big_stack_returns_the_value() {
+    assert_eq!(with_big_stack(|| 6 * 7), 42);
+}

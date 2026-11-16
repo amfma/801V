@@ -1,0 +1,14 @@
+// Recursion well inside the call-depth limit must work.
+fun depth(n) {
+  if (n == 0) return 0;
+  return 1 + depth(n - 1);
+}
+print depth(5000); // expect: 5000
+
+class Counter {
+  down(n) {
+    if (n == 0) return "done";
+    return this.down(n - 1);
+  }
+}
+print Counter().down(5000); // expect: done

@@ -145,3 +145,12 @@ fn repl_reports_syntax_errors_on_stderr() {
     assert!(!stdout.contains("Expect ';'"), "diagnostics must not reach stdout");
     assert!(stdout.contains('2'));
 }
+
+#[test]
+fn runaway_recursion_is_a_runtime_error_not_a_crash() {
+    let out = bin().arg(lox("error_stack_overflow.lox")).output().unwrap();
+    assert_eq!(out.status.code(), Some(70));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "start\n");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("Runtime error: Stack overflow."), "stderr was: {stderr:?}");
+}

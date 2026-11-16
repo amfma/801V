@@ -17,12 +17,18 @@ use crate::{
 
 type Output = Result<Value, Error>;
 
+/// Deepest nesting of Lox function calls before a "Stack overflow." runtime
+/// error is raised. The interpreter recurses on the Rust stack, so this must
+/// stay well within `runner::STACK_SIZE`.
+pub const MAX_CALL_DEPTH: usize = 10_000;
+
 pub struct Interpreter {
     enviroment: Rc<RefCell<Enviroment>>,
     globals: Rc<RefCell<Enviroment>>,
     stdout: Rc<RefCell<dyn Write>>,
     stderr: Rc<RefCell<dyn Write>>,
     locals: FxHashMap<TokenIndex, usize>,
+    call_depth: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +108,7 @@ impl Interpreter {
 
         Interpreter {
             locals: FxHashMap::default(),
+            call_depth: 0,
             enviroment: globals.clone(),
             globals: globals,
             stdout,
@@ -472,16 +479,17 @@ impl Interpreter {
                             evaluated_arguments.len()
                         ),
                     ))
+                } else if self.call_depth >= MAX_CALL_DEPTH {
+                    Err(Error::runtime(paren, "Stack overflow."))
                 } else {
-                    function
-                        .call(self, &evaluated_arguments)
-                        .map_err(|error| match error {
-                            // Natives have no position of their own: use the call site.
-                            Error::RuntimeError => {
-                                Error::runtime(paren, "Native function failed.")
-                            }
-                            other => other,
-                        })
+                    self.call_depth += 1;
+                    let result = function.call(self, &evaluated_arguments);
+                    self.call_depth -= 1;
+                    result.map_err(|error| match error {
+                        // Natives have no position of their own: use the call site.
+                        Error::RuntimeError => Error::runtime(paren, "Native function failed."),
+                        other => other,
+                    })
                 }
             }
             _ => Err(Error::runtime(

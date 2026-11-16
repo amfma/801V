@@ -1,0 +1,8 @@
+// Runaway recursion is a normal runtime error, not a crash.
+print "start"; // expect: start
+fun forever(n) {
+  return forever(n + 1);
+}
+// expect diagnostic: [line 4] Runtime error: Stack overflow.
+forever(0); // expect error: runtime
+print "unreachable";
