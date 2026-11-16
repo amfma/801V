@@ -2,6 +2,10 @@ use std::{cell::RefCell, env, io, process, rc::Rc};
 
 use amfrustlox::{interpreter::Interpreter, runner};
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     // Lox recursion maps onto Rust recursion: run on a thread with a big stack.
     let code = runner::with_big_stack(real_main);

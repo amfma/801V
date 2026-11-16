@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Faster allocator: the interpreter allocates a lot (environments, instances,
+# argument lists). Needs a C compiler to build; if that is a problem, build
+# with `--no-default-features` to use the system allocator instead.
+mimalloc = { version = "0.1", optional = true, default-features = false }
+
+[features]
+default = ["mimalloc"]
 
 [profile.release]
 lto = "fat"
