@@ -154,3 +154,17 @@ fn runaway_recursion_is_a_runtime_error_not_a_crash() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("Runtime error: Stack overflow."), "stderr was: {stderr:?}");
 }
+
+#[test]
+fn sieve_demo_prints_the_expected_passes() {
+    // The golden output was checked against an independent sieve and against
+    // the reference jlox interpreter.
+    let program = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("sieve_145.lox");
+    let out = bin().arg(program).output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stderr.is_empty());
+    let expected = include_str!("golden/sieve_145.out");
+    assert_eq!(String::from_utf8(out.stdout).unwrap().trim_end(), expected.trim_end());
+}

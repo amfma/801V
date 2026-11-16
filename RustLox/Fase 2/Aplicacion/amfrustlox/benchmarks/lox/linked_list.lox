@@ -1,0 +1,94 @@
+// Singly linked list benchmark (not part of the original jlox suite).
+//
+// Each round: build a list of 500 elements, remove the last element, add a new
+// element at the end, then reverse the list. The result is checked every
+// round, so a wrong implementation cannot pass by being fast.
+
+class Node {
+  init(value) {
+    this.value = value;
+    this.next = nil;
+  }
+}
+
+class LinkedList {
+  init() {
+    this.head = nil;
+    this.tail = nil;
+    this.size = 0;
+  }
+
+  append(value) {
+    var node = Node(value);
+    if (this.head == nil) {
+      this.head = node;
+    } else {
+      this.tail.next = node;
+    }
+    this.tail = node;
+    this.size = this.size + 1;
+  }
+
+  // Removes the last element and returns its value (nil when empty).
+  removeLast() {
+    if (this.head == nil) return nil;
+    var last = this.tail;
+    if (this.head == last) {
+      this.head = nil;
+      this.tail = nil;
+    } else {
+      var previous = this.head;
+      while (previous.next != last) previous = previous.next;
+      previous.next = nil;
+      this.tail = previous;
+    }
+    this.size = this.size - 1;
+    return last.value;
+  }
+
+  reverse() {
+    var previous = nil;
+    var current = this.head;
+    this.tail = this.head;
+    while (current != nil) {
+      var next = current.next;
+      current.next = previous;
+      previous = current;
+      current = next;
+    }
+    this.head = previous;
+  }
+
+  sum() {
+    var total = 0;
+    var node = this.head;
+    while (node != nil) {
+      total = total + node.value;
+      node = node.next;
+    }
+    return total;
+  }
+}
+
+var start = clock();
+
+var rounds = 2000;
+var checksum = 0;
+for (var round = 0; round < rounds; round = round + 1) {
+  var list = LinkedList();
+  for (var i = 1; i <= 500; i = i + 1) list.append(i);   // 1..500
+
+  list.removeLast();                                     // drops 500
+  list.append(1000);                                     // 1..499, 1000
+  list.reverse();                                        // 1000, 499..1
+
+  // 499 elements 1..499 sum to 124750, plus 1000.
+  if (list.size != 500 or list.sum() != 125750 or
+      list.head.value != 1000 or list.tail.value != 1) {
+    print "WRONG RESULT";
+  }
+  checksum = checksum + list.head.value;
+}
+
+print checksum;
+print clock() - start;

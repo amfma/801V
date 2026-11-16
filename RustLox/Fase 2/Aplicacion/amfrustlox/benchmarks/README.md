@@ -9,9 +9,10 @@ It needs Python 3 (standard library only). jlox is only needed the first time.
 
 ## Programs
 
-The `.lox` files in `lox/` are the benchmark programs from the book's
+Most `.lox` files in `lox/` are the benchmark programs from the book's
 repository ([munificent/craftinginterpreters](https://github.com/munificent/craftinginterpreters),
-`test/benchmark/`, MIT license, see `lox/LICENSE-MIT.txt`).
+`test/benchmark/`, MIT license, see `lox/LICENSE-MIT.txt`). `linked_list` and
+`sieve` were written for this project and are not part of that suite.
 
 | Program | What it stresses |
 |---|---|
@@ -23,6 +24,8 @@ repository ([munificent/craftinginterpreters](https://github.com/munificent/craf
 | `equality`, `string_equality` | `==` on numbers / strings in a loop |
 | `binary_trees`, `trees` | allocation-heavy object graphs |
 | `zoo` | many small method calls on one instance |
+| `linked_list` | field access and object allocation: builds a 500-element singly linked list, removes the last element, appends one, reverses it (2000 rounds, result checked each round) |
+| `sieve` | Sieve of Eratosthenes over the first 150 integers on a linked list of cells (Lox has no arrays, `%` or `floor`), 3000 rounds, result checked each round |
 | `zoo_batch` | like `zoo`, but runs for a fixed 10 s and reports **batches completed** (higher is better) |
 
 Every program prints its own elapsed time as its last line, measured with

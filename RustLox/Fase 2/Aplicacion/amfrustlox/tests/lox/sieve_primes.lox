@@ -1,0 +1,65 @@
+// Sieve of Eratosthenes on a linked list of cells (the same algorithm as
+// benchmarks/lox/sieve.lox), printing the primes up to 50.
+class Cell {
+  init(number) {
+    this.number = number;
+    this.isPrime = number >= 2;
+    this.next = nil;
+  }
+}
+
+fun buildCells(limit) {
+  var head = Cell(0);
+  var tail = head;
+  for (var n = 1; n <= limit; n = n + 1) {
+    var cell = Cell(n);
+    tail.next = cell;
+    tail = cell;
+  }
+  return head;
+}
+
+fun cellAt(head, index) {
+  var cell = head;
+  for (var i = 0; i < index; i = i + 1) cell = cell.next;
+  return cell;
+}
+
+fun sieve(limit) {
+  var head = buildCells(limit);
+  var p = 2;
+  while (p * p <= limit) {
+    if (cellAt(head, p).isPrime) {
+      var cell = cellAt(head, p * p);
+      while (cell != nil) {
+        cell.isPrime = false;
+        for (var step = 0; step < p and cell != nil; step = step + 1) {
+          cell = cell.next;
+        }
+      }
+    }
+    p = p + 1;
+  }
+  return head;
+}
+
+var node = sieve(50);
+while (node != nil) {
+  if (node.isPrime) print node.number;
+  node = node.next;
+}
+// expect: 2
+// expect: 3
+// expect: 5
+// expect: 7
+// expect: 11
+// expect: 13
+// expect: 17
+// expect: 19
+// expect: 23
+// expect: 29
+// expect: 31
+// expect: 37
+// expect: 41
+// expect: 43
+// expect: 47

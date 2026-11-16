@@ -1,0 +1,134 @@
+// Sieve of Eratosthenes over the integers 2..145.
+//
+// After every pass the numbers still in the sieve are printed. The full set
+// before the first pass (the multiples of 2 are still in it) is not shown.
+//
+// A pass for the prime p removes p*p, p*p + p, p*p + 2p, ... (smaller
+// multiples of p were already removed by earlier passes). Passes stop once
+// p*p is larger than 145, because every composite <= 145 has a factor <= 11.
+//
+// Lox has no arrays, `%`, `floor` or number-to-string conversion, so the
+// numbers live in a linked list (removing a number unlinks its node) and
+// `show` formats them itself using only comparisons and subtraction.
+//
+// Run it with:  cargo run --release -- examples/sieve_145.lox
+
+var limit = 145;
+var perRow = 15;
+
+class Node {
+  init(number) {
+    this.number = number;
+    this.next = nil;
+  }
+}
+
+// Builds the list 2, 3, ..., limit and returns its head.
+fun build(limit) {
+  var head = Node(2);
+  var tail = head;
+  for (var n = 3; n <= limit; n = n + 1) {
+    var node = Node(n);
+    tail.next = node;
+    tail = node;
+  }
+  return head;
+}
+
+// One pass for the prime p: unlinks p*p, p*p + p, ... from the list.
+// The head (2) is never removed: it is the first prime, and p*p > 2.
+fun pass(head, p) {
+  var multiple = p * p;
+  var previous = head;
+  var node = head.next;
+  while (node != nil) {
+    while (multiple < node.number) multiple = multiple + p;
+    if (multiple == node.number) {
+      previous.next = node.next;   // unlink
+      multiple = multiple + p;
+    } else {
+      previous = node;
+    }
+    node = node.next;
+  }
+}
+
+fun digit(d) {
+  if (d == 0) return "0";
+  if (d == 1) return "1";
+  if (d == 2) return "2";
+  if (d == 3) return "3";
+  if (d == 4) return "4";
+  if (d == 5) return "5";
+  if (d == 6) return "6";
+  if (d == 7) return "7";
+  if (d == 8) return "8";
+  return "9";
+}
+
+// A number (0..999) as exactly three characters, right-aligned.
+fun cell(n) {
+  var hundreds = 0;
+  while (n >= 100) { n = n - 100; hundreds = hundreds + 1; }
+  var tens = 0;
+  while (n >= 10) { n = n - 10; tens = tens + 1; }
+
+  var text = " ";
+  if (hundreds > 0) text = digit(hundreds);
+  if (hundreds > 0 or tens > 0) text = text + digit(tens);
+  else text = text + " ";
+  return text + digit(n);
+}
+
+// A number (0..999) without padding, for use inside sentences.
+fun plain(n) {
+  var hundreds = 0;
+  while (n >= 100) { n = n - 100; hundreds = hundreds + 1; }
+  var tens = 0;
+  while (n >= 10) { n = n - 10; tens = tens + 1; }
+
+  var text = "";
+  if (hundreds > 0) text = digit(hundreds);
+  if (hundreds > 0 or tens > 0) text = text + digit(tens);
+  return text + digit(n);
+}
+
+// Prints every number left in the list, perRow per line, and returns how
+// many there are.
+fun show(head) {
+  var count = 0;
+  var row = "";
+  for (var node = head; node != nil; node = node.next) {
+    if (count > 0 and row != "") row = row + " ";
+    row = row + cell(node.number);
+    count = count + 1;
+    var inRow = count;
+    while (inRow > perRow) inRow = inRow - perRow;
+    if (inRow == perRow) {
+      print "  " + row;
+      row = "";
+    }
+  }
+  if (row != "") print "  " + row;
+  return count;
+}
+
+var head = build(limit);
+var current = head;          // node holding the prime used for the next pass
+var passNumber = 0;
+
+while (current.number * current.number <= limit) {
+  var p = current.number;
+  passNumber = passNumber + 1;
+  pass(head, p);
+
+  print "Pass " + plain(passNumber) + ": after removing the multiples of " + plain(p) + " (starting at " + plain(p * p) + "):";
+  var remaining = show(head);
+  print "  " + plain(remaining) + " numbers remain";
+  print "";
+
+  current = current.next;    // the next number still in the sieve is prime
+}
+
+print "Done: the next number in the sieve is " + plain(current.number) + ", and " + plain(current.number) + " * " + plain(current.number) + " is above " + plain(limit) + ",";
+print "so no composite is left. The numbers shown in the last pass are the primes up to " + plain(limit) + ".";

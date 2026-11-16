@@ -1,0 +1,80 @@
+// Linked list: build, remove the last element, append, reverse (the same
+// operations as benchmarks/lox/linked_list.lox, on 5 elements so the contents
+// can be checked element by element).
+class Node {
+  init(value) { this.value = value; this.next = nil; }
+}
+
+class LinkedList {
+  init() { this.head = nil; this.tail = nil; this.size = 0; }
+
+  append(value) {
+    var node = Node(value);
+    if (this.head == nil) this.head = node; else this.tail.next = node;
+    this.tail = node;
+    this.size = this.size + 1;
+  }
+
+  removeLast() {
+    if (this.head == nil) return nil;
+    var last = this.tail;
+    if (this.head == last) {
+      this.head = nil;
+      this.tail = nil;
+    } else {
+      var previous = this.head;
+      while (previous.next != last) previous = previous.next;
+      previous.next = nil;
+      this.tail = previous;
+    }
+    this.size = this.size - 1;
+    return last.value;
+  }
+
+  reverse() {
+    var previous = nil;
+    var current = this.head;
+    this.tail = this.head;
+    while (current != nil) {
+      var next = current.next;
+      current.next = previous;
+      previous = current;
+      current = next;
+    }
+    this.head = previous;
+  }
+
+  show() {
+    var node = this.head;
+    while (node != nil) {
+      print node.value;
+      node = node.next;
+    }
+  }
+}
+
+var list = LinkedList();
+for (var i = 1; i <= 5; i = i + 1) list.append(i);
+
+print list.removeLast(); // expect: 5
+print list.size;         // expect: 4
+list.append(99);
+list.reverse();
+print list.size;         // expect: 5
+list.show();
+// expect: 99
+// expect: 4
+// expect: 3
+// expect: 2
+// expect: 1
+print list.head.value;   // expect: 99
+print list.tail.value;   // expect: 1
+
+// Edge cases: empty list, single element.
+var empty = LinkedList();
+print empty.removeLast(); // expect: nil
+empty.reverse();
+print empty.size;         // expect: 0
+empty.append(7);
+print empty.removeLast(); // expect: 7
+print empty.head;         // expect: nil

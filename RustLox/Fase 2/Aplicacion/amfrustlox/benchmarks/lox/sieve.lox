@@ -1,0 +1,71 @@
+// Sieve of Eratosthenes over the first 150 integers (not part of the original
+// jlox suite).
+//
+// Lox has no arrays, `%` or `floor`, so the numbers 0..150 live in a linked
+// list of cells and multiples are found by stepping p cells at a time.
+// The count of primes <= 150 is 35; the result is checked every round.
+
+class Cell {
+  init(number) {
+    this.number = number;
+    this.isPrime = number >= 2;
+    this.next = nil;
+  }
+}
+
+fun buildCells(limit) {
+  var head = Cell(0);
+  var tail = head;
+  for (var n = 1; n <= limit; n = n + 1) {
+    var cell = Cell(n);
+    tail.next = cell;
+    tail = cell;
+  }
+  return head;
+}
+
+fun cellAt(head, index) {
+  var cell = head;
+  for (var i = 0; i < index; i = i + 1) cell = cell.next;
+  return cell;
+}
+
+fun sieve(limit) {
+  var head = buildCells(limit);
+
+  var p = 2;
+  while (p * p <= limit) {
+    if (cellAt(head, p).isPrime) {
+      // Cross out p*p, p*p + p, p*p + 2p, ... by stepping p cells at a time.
+      var cell = cellAt(head, p * p);
+      while (cell != nil) {
+        cell.isPrime = false;
+        for (var step = 0; step < p and cell != nil; step = step + 1) {
+          cell = cell.next;
+        }
+      }
+    }
+    p = p + 1;
+  }
+
+  var count = 0;
+  var node = head;
+  while (node != nil) {
+    if (node.isPrime) count = count + 1;
+    node = node.next;
+  }
+  return count;
+}
+
+var start = clock();
+
+var rounds = 3000;
+var total = 0;
+for (var round = 0; round < rounds; round = round + 1) {
+  var primes = sieve(150);
+  if (primes != 35) print "WRONG RESULT";
+  total = total + primes;
+}
+
+print total;
+print clock() - start;
